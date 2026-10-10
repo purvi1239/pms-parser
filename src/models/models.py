@@ -14,6 +14,7 @@ class Holding(BaseModel):
     security_name: str | None = None
     isin: str | None = None
     quantity: Decimal | None = None
+    price: Decimal | None = None
     cost: Decimal | None = None
     market_value: Decimal | None = None
     weight: Decimal | None = None
@@ -28,6 +29,7 @@ class Transaction(BaseModel):
     type: TransactionType
     security: str | None = None
     quantity: Decimal | None = None
+    price: Decimal | None = None
     amount: Decimal | None = None  # Signed cash impact on portfolio
 
 
