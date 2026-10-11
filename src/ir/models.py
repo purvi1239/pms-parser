@@ -104,8 +104,27 @@ class PageIR(BaseModel):
     tables: list[TableIR] = Field(default_factory=list)
 
     def get_text(self) -> str:
-        """Return the raw extracted text of the page."""
-        return self.raw_text
+        """Return the best available text for this page.
+
+        Preference order:
+        1. ``raw_text`` if non-empty (always set by ``extract_pdf``).
+        2. Words joined in reading order (available in test fixtures and
+           digital PDFs that expose word tokens without a text layer).
+        3. Table rows flattened to a space-joined string.
+        """
+        if self.raw_text:
+            return self.raw_text
+        # Fallback 1: words
+        if self.words:
+            return " ".join(w.text for w in self.words if w.text)
+        # Fallback 2: table cell content
+        if self.tables:
+            parts: list[str] = []
+            for t in self.tables:
+                for row in t.rows:
+                    parts.append(" ".join(cell for cell in row if cell))
+            return " ".join(parts)
+        return ""
 
 
 class DocumentIR(BaseModel):
@@ -126,8 +145,14 @@ class DocumentIR(BaseModel):
         raise IndexError(f"Page {page_number} not found in document with {self.page_count} pages.")
 
     def get_all_text(self) -> str:
-        """Concatenate all raw text from all pages in order."""
-        return "\n\n".join(p.raw_text for p in self.pages if p.raw_text)
+        """Concatenate the best available text from all pages in order.
+
+        Delegates to ``PageIR.get_text()`` so that pages with populated
+        ``words`` or ``tables`` but an empty ``raw_text`` (e.g. in-memory
+        test fixtures and digital PDFs without a contiguous text layer)
+        still produce meaningful content for classifiers and fingerprinters.
+        """
+        return "\n\n".join(p.get_text() for p in self.pages if p.get_text())
 
     def get_all_tables(self) -> list[TableIR]:
         """Flatten and return all tables across all pages."""
