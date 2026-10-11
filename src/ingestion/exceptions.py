@@ -1,4 +1,4 @@
-"""Exceptions for directory and file ingestion."""
+"""Exceptions for directory, file, and email ingestion."""
 from __future__ import annotations
 
 
@@ -16,3 +16,11 @@ class DirectoryNotFoundError(InvalidDirectoryError, FileNotFoundError):
 
 class NotADirectoryPathError(InvalidDirectoryError, NotADirectoryError):
     """Raised when the specified path exists but is a file or non-directory."""
+
+
+class EmailIngestionError(IngestionError):
+    """Base exception for email attachment ingestion errors."""
+
+
+class MalformedEmailError(EmailIngestionError, ValueError):
+    """Raised when an email message payload is malformed or unparseable."""
