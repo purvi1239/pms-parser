@@ -32,20 +32,42 @@ def to_decimal(val: Any) -> Decimal | None:
         return Decimal(str(val))
 
     s = str(val).strip()
-    if not s or s in ("-", "--", "N/A", "NA", "nil", "None", ""):
+    if not s or s in ("-", "--", "---", "—", "–", "−", "N/A", "NA", "nil", "None", ""):
         return None
 
     is_negative = False
     if s.startswith("(") and s.endswith(")"):
         is_negative = True
         s = s[1:-1].strip()
-    elif s.startswith("-"):
+    elif s.startswith(("-", "−", "–")):
         is_negative = True
+        s = s[1:].strip()
+    elif s.endswith(("-", "−", "–")):
+        is_negative = True
+        s = s[:-1].strip()
+    elif s.startswith("+"):
         s = s[1:].strip()
 
     # Strip currency prefixes and suffixes
     s_stripped = re.sub(r"^(?:₹|INR|USD|EUR|GBP|\$|€|£)\s*", "", s, flags=re.IGNORECASE).strip()
     s_stripped = re.sub(r"\s*(?:%|INR|USD|EUR|GBP)$", "", s_stripped, flags=re.IGNORECASE).strip()
+
+    # Check for placeholder dash after currency prefix, e.g. "₹ —" or "₹ -"
+    if s_stripped in ("-", "--", "---", "—", "–", "−", "N/A", "NA", "nil", "None"):
+        return None
+
+    # Check again for minus sign or parens inside/after currency prefix, e.g. ₹-110,000.00 or ₹(110,000.00)
+    if s_stripped.startswith("(") and s_stripped.endswith(")"):
+        is_negative = True
+        s_stripped = s_stripped[1:-1].strip()
+    elif s_stripped.startswith(("-", "−", "–")):
+        is_negative = True
+        s_stripped = s_stripped[1:].strip()
+    elif s_stripped.endswith(("-", "−", "–")):
+        is_negative = True
+        s_stripped = s_stripped[:-1].strip()
+    elif s_stripped.startswith("+"):
+        s_stripped = s_stripped[1:].strip()
 
     # Remove commas in numbers
     s_clean = s_stripped.replace(",", "").strip()
@@ -56,7 +78,9 @@ def to_decimal(val: Any) -> Decimal | None:
 
     try:
         dec = Decimal(s_clean)
-        return -dec if is_negative else dec
+        if is_negative and dec != Decimal(0):
+            return -dec
+        return dec
     except (InvalidOperation, ValueError) as err:
         raise ValueError(f"Cannot convert '{val}' to Decimal: {err}") from err
 
@@ -84,7 +108,7 @@ def to_date(val: Any) -> datetime.date | str | None:
         return val.date()
 
     s = str(val).strip()
-    if not s or s in ("-", "--", "N/A", "NA"):
+    if not s or s in ("-", "--", "---", "—", "–", "−", "N/A", "NA", "nil", "None", ""):
         return None
 
     for fmt in _DATE_FORMATS:

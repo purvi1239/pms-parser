@@ -32,6 +32,7 @@ from src.engine import (
     to_date,
     to_transaction_type,
 )
+from src.ir import extract_pdf
 from src.ir.models import (
     BBox,
     DocumentIR,
@@ -182,6 +183,380 @@ def test_value_right_of_anchor_extraction(mock_document_ir):
     )
     val_curr, _ = extract_field_value(mock_document_ir, loc_curr, "currency")
     assert val_curr == "INR"
+
+
+def test_value_right_of_anchor_single_space_adjacent_label():
+    """VALUE_RIGHT_OF_ANCHOR strips adjacent labels when separated by single space."""
+    block1 = TextBlock(
+        text="Client ID: PWM-CLIENT-0042 Statement Period: 01 January 2026 to 31 March 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=60, x1=450, bottom=72),
+    )
+    block2 = TextBlock(
+        text="Currency: INR Statement Type: PMS Quarterly Portfolio Report",
+        page_number=1,
+        bbox=BBox(x0=50, top=75, x1=400, bottom=87),
+    )
+    block3 = TextBlock(
+        text="Account Number: ACT-0029-B Report Period: 01 January 2026 to 31 March 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=90, x1=450, bottom=102),
+    )
+    block4 = TextBlock(
+        text="Investor ID: NV-AIF-2026-0011 Commitment Period: 01 January 2026 to 31 March 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=105, x1=450, bottom=117),
+    )
+    block5 = TextBlock(
+        text="Client Name: John Doe Statement Period: 01 January 2026 to 31 March 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=120, x1=450, bottom=132),
+    )
+    block6 = TextBlock(
+        text="Strategy: Large Cap Equity / Growth Statement Period: 01 January 2026 to 31 March 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=135, x1=450, bottom=147),
+    )
+    block7 = TextBlock(
+        text="Report Time: 10:30:00 Status: Final Statement Period: 01 Jan 2026",
+        page_number=1,
+        bbox=BBox(x0=50, top=150, x1=450, bottom=162),
+    )
+    block8 = TextBlock(
+        text="Realised Gains: ₹0.00 Unrealised Gains: ₹174,000.00",
+        page_number=1,
+        bbox=BBox(x0=50, top=165, x1=450, bottom=177),
+    )
+    doc = DocumentIR(
+        page_count=1,
+        pages=[PageIR(
+            page_number=1,
+            width=595.0,
+            height=842.0,
+            text_blocks=[block1, block2, block3, block4, block5, block6, block7, block8],
+        )],
+    )
+
+    # Format A Client ID
+    val_a, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Client ID:"),
+        "client_identifier",
+    )
+    assert val_a == "PWM-CLIENT-0042"
+
+    # Format A Currency
+    val_curr, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Currency:"),
+        "currency",
+    )
+    assert val_curr == "INR"
+
+    # Format B Account Number
+    val_b, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Account Number:"),
+        "client_identifier",
+    )
+    assert val_b == "ACT-0029-B"
+
+    # Format C Investor ID
+    val_c, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Investor ID:"),
+        "client_identifier",
+    )
+    assert val_c == "NV-AIF-2026-0011"
+
+    # Multi-word string without truncation
+    val_name, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Client Name:"),
+        "client_name",
+    )
+    assert val_name == "John Doe"
+
+    # Multi-word strategy with slashes without truncation
+    val_strat, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Strategy:"),
+        "strategy",
+    )
+    assert val_strat == "Large Cap Equity / Growth"
+
+    # Value containing colon (time)
+    val_time, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Report Time:"),
+        "report_time",
+    )
+    assert val_time == "10:30:00"
+
+    # Legitimate zero currency value
+    val_zero, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Realised Gains:"),
+        "realized_gains",
+    )
+    assert val_zero == "₹0.00"
+
+
+def test_value_right_of_anchor_legitimate_zero_and_missing_values():
+    """Verify that zero values are extracted faithfully and missing values return None/default."""
+    table = TableIR(
+        page_number=1,
+        rows=[
+            ["Realised Gains", "0.00"],
+            ["Fees Waived", "0"],
+            ["Unrealised Gains", "₹0.00"],
+            ["Empty Value", ""],
+            ["Whitespace Value", "   "],
+        ],
+    )
+    doc = DocumentIR(page_count=1, pages=[PageIR(page_number=1, width=595.0, height=842.0, tables=[table])])
+
+    # Legitimate zero strings must be preserved
+    val_rg, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Realised Gains"))
+    assert val_rg == "0.00"
+
+    val_fw, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Fees Waived"))
+    assert val_fw == "0"
+
+    val_ug, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Unrealised Gains"))
+    assert val_ug == "₹0.00"
+
+    # Truly empty or whitespace-only cells return None
+    val_empty, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Empty Value"))
+    assert val_empty is None
+
+    val_ws, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Whitespace Value"))
+    assert val_ws is None
+
+    # Missing anchor with explicit default returns the default
+    val_default, _ = extract_field_value(
+        doc,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Nonexistent Field", default=Decimal("0.00")),
+        "nonexistent",
+    )
+    assert val_default == Decimal("0.00")
+
+
+def test_value_right_of_anchor_false_matches_prevention():
+    """Verify that search does not match unrelated compound labels or partial substring anchors."""
+    table = TableIR(
+        page_number=1,
+        rows=[
+            ["Total Portfolio Value", "₹1,500,000.00"],
+            ["Total", "₹1,200,000.00"],
+            ["Opening Portfolio Value", "₹1,000,000.00"],
+            ["Income Tax", "₹5,000.00"],
+            ["Income (Dividends/Int.)", "₹12,000.00"],
+            ["NAV Date", "31/03/2026"],
+            ["NAV Per Unit (INR)", "₹970.00"],
+        ],
+    )
+    block_text = TextBlock(
+        text="This portfolio has Fixed Income: ₹50,000.00. Normal Income: ₹12,000.00.",
+        page_number=1,
+        bbox=BBox(x0=50, top=200, x1=450, bottom=212),
+    )
+    doc = DocumentIR(
+        page_count=1,
+        pages=[PageIR(page_number=1, width=595.0, height=842.0, tables=[table], text_blocks=[block_text])],
+    )
+
+    # Exact 'Total' should match 'Total', not 'Total Portfolio Value'
+    val_total, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Total"))
+    assert val_total == "₹1,200,000.00"
+
+    # 'Income' should match 'Income (Dividends/Int.)', not 'Income Tax'
+    val_inc, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Income"))
+    assert val_inc == "₹12,000.00"
+
+    # 'Opening' should NOT match 'Opening Portfolio Value'
+    val_open, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Opening"))
+    assert val_open is None
+
+    # 'NAV' should NOT match 'NAV Date'
+    val_nav, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="NAV"))
+    assert val_nav is None
+
+
+def test_value_right_of_anchor_parenthetical_prefix_and_negative_amounts():
+    """Verify parenthetical unit stripping while preserving legitimate negative amounts in parentheses."""
+    block1 = TextBlock(
+        text="Income (Dividends/Int.): ₹12,000.00",
+        page_number=1,
+        bbox=BBox(x0=50, top=60, x1=400, bottom=72),
+    )
+    block2 = TextBlock(
+        text="Opening Balance (INR): ₹500,000.00",
+        page_number=1,
+        bbox=BBox(x0=50, top=75, x1=400, bottom=87),
+    )
+    block3 = TextBlock(
+        text="Net Realised Loss: (1,250.00)",
+        page_number=1,
+        bbox=BBox(x0=50, top=90, x1=400, bottom=102),
+    )
+    block4 = TextBlock(
+        text="Adjustment: (0.00)",
+        page_number=1,
+        bbox=BBox(x0=50, top=105, x1=400, bottom=117),
+    )
+    doc = DocumentIR(
+        page_count=1,
+        pages=[PageIR(page_number=1, width=595.0, height=842.0, text_blocks=[block1, block2, block3, block4])],
+    )
+
+    # Unit / description parenthetical stripped
+    val_inc, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Income"))
+    assert val_inc == "₹12,000.00"
+
+    val_open, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Opening Balance"))
+    assert val_open == "₹500,000.00"
+
+    # Negative accounting amounts in parentheses MUST be preserved
+    val_loss, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Net Realised Loss:"))
+    assert val_loss == "(1,250.00)"
+
+    val_adj, _ = extract_field_value(doc, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Adjustment:"))
+    assert val_adj == "(0.00)"
+
+
+def test_summary_field_extractions_formats_a_b_c():
+    """Verify summary extraction across vertical, horizontal, and AIF multi-table formats."""
+    # 1. Format A vertical table with prefix anchor (e.g. Income matching Income (Dividends/Int.))
+    table_a = TableIR(
+        page_number=1,
+        rows=[
+            ["Opening Portfolio Value", "₹1,200,000.00"],
+            ["Closing Portfolio Value", "₹1,473,500.00"],
+            ["Income (Dividends/Int.)", "₹12,000.00"],
+        ],
+    )
+    doc_a = DocumentIR(page_count=1, pages=[PageIR(page_number=1, width=595.0, height=842.0, tables=[table_a])])
+    val_open, _ = extract_field_value(doc_a, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Opening Portfolio Value"))
+    assert val_open == "₹1,200,000.00"
+    val_inc, _ = extract_field_value(doc_a, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Income"))
+    assert val_inc == "₹12,000.00"
+
+    # 2. Format B horizontal summary table (VALUE_BELOW_ANCHOR)
+    table_b = TableIR(
+        page_number=1,
+        rows=[
+            ["Opening Value", "Closing Value", "Opening Cash", "Closing Cash", "Fees Charged", "Income", "Realised Gains", "Unrealised Gains"],
+            ["₹1,200,000.00", "₹1,473,500.00", "₹80,000.00", "₹93,500.00", "₹8,500.00", "₹12,000.00", "₹0.00", "₹174,000.00"],
+        ],
+    )
+    doc_b = DocumentIR(page_count=1, pages=[PageIR(page_number=1, width=595.0, height=842.0, tables=[table_b])])
+    val_b_open, _ = extract_field_value(doc_b, FieldLocator(locator_type=LocatorType.VALUE_BELOW_ANCHOR, anchor="Opening Value"))
+    assert val_b_open == "₹1,200,000.00"
+    val_b_cash, _ = extract_field_value(doc_b, FieldLocator(locator_type=LocatorType.VALUE_BELOW_ANCHOR, anchor="Opening Cash"))
+    assert val_b_cash == "₹80,000.00"
+    val_b_gains, _ = extract_field_value(doc_b, FieldLocator(locator_type=LocatorType.VALUE_BELOW_ANCHOR, anchor="Unrealised Gains"))
+    assert val_b_gains == "₹174,000.00"
+
+    # 3. Format C AIF summary tables (Fund Overview & Fund Performance)
+    table_c_nav = TableIR(
+        page_number=1,
+        rows=[
+            ["Units Held", "480.0000"],
+            ["NAV Per Unit (INR)", "₹970.00"],
+            ["Total Investment Value (INR)", "₹465,600.00"],
+        ],
+    )
+    doc_c = DocumentIR(page_count=1, pages=[PageIR(page_number=1, width=595.0, height=842.0, tables=[table_c_nav])])
+    val_c_units, _ = extract_field_value(doc_c, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Units Held"))
+    assert val_c_units == "480.0000"
+    val_c_nav, _ = extract_field_value(doc_c, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="NAV Per Unit"))
+    assert val_c_nav == "₹970.00"
+    val_c_close, _ = extract_field_value(doc_c, FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Total Investment Value"))
+    assert val_c_close == "₹465,600.00"
+
+
+def test_actual_pdf_extraction_formats_a_b_c():
+    """Verify actual PDF extraction across Formats A, B, and C using extract_pdf."""
+    samples_dir = Path("samples/synthetic")
+    pdf_a = samples_dir / "format_a1.pdf"
+    if not (samples_dir.is_dir() and pdf_a.exists()):
+        pytest.skip("Synthetic PDF samples not found in samples/synthetic")
+
+    # 1. Format A PDF extraction
+    doc_a = extract_pdf(pdf_a)
+    assert doc_a.page_count >= 1
+    val_client_a, _ = extract_field_value(
+        doc_a,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Client ID:"),
+        "client_identifier",
+    )
+    assert val_client_a == "PWM-CLIENT-0042"
+
+    val_curr_a, _ = extract_field_value(
+        doc_a,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Currency:"),
+        "currency",
+    )
+    assert val_curr_a == "INR"
+
+    val_open_a, _ = extract_field_value(
+        doc_a,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Opening Portfolio Value", offset_x=500.0),
+        "opening_value",
+    )
+    assert val_open_a is not None and "₹" in val_open_a
+
+    val_inc_a, _ = extract_field_value(
+        doc_a,
+        FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Income", offset_x=500.0),
+        "income",
+    )
+    assert val_inc_a is not None and "₹" in val_inc_a
+
+    # 2. Format B PDF extraction
+    pdf_b = samples_dir / "format_b.pdf"
+    if pdf_b.exists():
+        doc_b = extract_pdf(pdf_b)
+        val_acc_b, _ = extract_field_value(
+            doc_b,
+            FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Account Number:"),
+            "client_identifier",
+        )
+        assert val_acc_b == "HCM-2025-0099"
+
+        val_curr_b, _ = extract_field_value(
+            doc_b,
+            FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Base Currency:"),
+            "currency",
+        )
+        assert val_curr_b == "INR"
+
+        # Format B horizontal summary table uses VALUE_BELOW_ANCHOR
+        val_open_b, _ = extract_field_value(
+            doc_b,
+            FieldLocator(locator_type=LocatorType.VALUE_BELOW_ANCHOR, anchor="Opening Value"),
+            "opening_value",
+        )
+        assert val_open_b is not None and "₹" in val_open_b
+
+    # 3. Format C PDF extraction (AIF)
+    pdf_c = samples_dir / "format_c.pdf"
+    if pdf_c.exists():
+        doc_c = extract_pdf(pdf_c)
+        val_inv_c, _ = extract_field_value(
+            doc_c,
+            FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Investor ID:"),
+            "client_identifier",
+        )
+        assert val_inv_c == "NV-AIF-2026-0011"
+
+        val_units_c, _ = extract_field_value(
+            doc_c,
+            FieldLocator(locator_type=LocatorType.VALUE_RIGHT_OF_ANCHOR, anchor="Units Held", offset_x=500.0),
+            "units",
+        )
+        assert val_units_c is not None and "480" in val_units_c
 
 
 def test_value_below_anchor_extraction():
@@ -447,8 +822,18 @@ def test_decimal_conversion_formats():
     assert to_decimal("15.75 %") == Decimal("15.75")
     assert to_decimal("(50,000.00)") == Decimal("-50000.00")
     assert to_decimal("-1,200.00") == Decimal("-1200.00")
+    assert to_decimal("₹-110,000.00") == Decimal("-110000.00")
+    assert to_decimal("-₹50,000.00") == Decimal("-50000.00")
+    assert to_decimal("₹(12,500.00)") == Decimal("-12500.00")
+    assert to_decimal("(₹12,500.00)") == Decimal("-12500.00")
+    assert to_decimal("₹-25,000.00") == Decimal("-25000.00")
+    assert to_decimal("0.00") == Decimal("0.00")
+    assert to_decimal("₹0.00") == Decimal("0.00")
     assert to_decimal("N/A") is None
     assert to_decimal("-") is None
+    assert to_decimal("—") is None
+    assert to_decimal("–") is None
+    assert to_decimal("₹ —") is None
 
     with pytest.raises(ValueError):
         to_decimal("corrupted_amount_xyz")

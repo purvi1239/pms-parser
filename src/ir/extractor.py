@@ -68,6 +68,14 @@ def extract_pdf(path: str | Path, password: str | None = None) -> DocumentIR:
                 page_num = idx + 1
                 width = float(page.width)
                 height = float(page.height)
+                # Normalize font-fallback glyphs: ReportLab maps the Rupee symbol ₹ (U+20B9)
+                # to character code 'n' in ZapfDingbats when rendering standard Type 1 fonts.
+                # Normalizing this in page.chars before text, word, and table extraction ensures
+                # raw_text, words, text_blocks, and tables faithfully reconstruct the currency symbol.
+                if hasattr(page, "chars") and page.chars:
+                    for c in page.chars:
+                        if "dingbats" in str(c.get("fontname", "")).lower() and c.get("text") == "n":
+                            c["text"] = "₹"
 
                 raw_text = page.extract_text() or ""
 
@@ -129,10 +137,34 @@ def extract_pdf(path: str | Path, password: str | None = None) -> DocumentIR:
                             )
 
                 # Extract tables
+                # Use permissive settings so thin-border ReportLab tables
+                # (0.3 pt lines, non-black colours) are detected.  The
+                # defaults (snap_tolerance=3, join_tolerance=3) are sufficient
+                # for standard PDFs; raising both to 4 makes the table finder
+                # merge nearby thin line segments into table edges, exposing
+                # the teal/grey summary tables produced by the synthetic
+                # generators.  min_words_vertical/horizontal=0 prevents
+                # pdfplumber from discarding edge segments that fall in
+                # otherwise text-sparse cells (e.g. sparse summary rows).
+                # NOTE: "min_words_in_text_strip" is NOT a valid pdfplumber
+                # TableSettings field; use min_words_vertical / _horizontal.
+                _table_settings = {
+                    "snap_tolerance": 4,
+                    "join_tolerance": 4,
+                    "min_words_vertical": 0,
+                    "min_words_horizontal": 0,
+                }
                 tables_ir: list[TableIR] = []
                 try:
-                    table_candidates = page.find_tables() or []
-                    for t in table_candidates:
+                    table_candidates = page.find_tables(table_settings=_table_settings) or []
+                except Exception:
+                    try:
+                        table_candidates = page.find_tables() or []
+                    except Exception:
+                        table_candidates = []
+
+                for t in table_candidates:
+                    try:
                         t_bbox = None
                         if getattr(t, "bbox", None) is not None:
                             t_bbox = BBox(
@@ -185,8 +217,9 @@ def extract_pdf(path: str | Path, password: str | None = None) -> DocumentIR:
                                 cells=cells,
                             )
                         )
-                except Exception:
-                    tables_ir = []
+                    except Exception:
+                        # Skip this individual table; keep any already-extracted ones.
+                        pass
 
                 pages_ir.append(
                     PageIR(
