@@ -32,12 +32,18 @@ def get_default_specs_dir() -> Path:
 class SpecStore:
     """Repository for saving, loading, listing, and fingerprint-matching parsing specifications."""
 
-    def __init__(self, specs_dir: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        specs_dir: Path | str | None = None,
+        draft_prefix: str = "draft_",
+    ) -> None:
         """Initialize SpecStore.
 
         Args:
             specs_dir: Directory where specification JSON files are stored.
                        Defaults to '<project_root>/specs'.
+            draft_prefix: Prefix identifying unapproved draft specifications
+                         to exclude from normal fingerprint matching (default 'draft_').
         """
         if specs_dir is None:
             self.specs_dir = get_default_specs_dir()
@@ -45,6 +51,7 @@ class SpecStore:
             self.specs_dir = Path(specs_dir).resolve()
 
         self.specs_dir.mkdir(parents=True, exist_ok=True)
+        self.draft_prefix = draft_prefix
 
     def _spec_path(self, format_id: str) -> Path:
         """Resolve the file path for a given format_id safely within specs_dir."""
@@ -105,6 +112,9 @@ class SpecStore:
         """
         if not isinstance(spec, ParsingSpec):
             raise SpecValidationError(f"Expected ParsingSpec instance, got {type(spec).__name__}.")
+
+        if spec.fingerprint is not None and not spec.fingerprint.format_id:
+            spec.fingerprint.format_id = spec.format_id
 
         target_path = self._spec_path(spec.format_id)
 
@@ -261,6 +271,123 @@ class SpecStore:
         spec, _ = self.match_spec_by_fingerprint(query_fingerprint, match_threshold=match_threshold)
         return spec
 
+    def is_draft(self, spec_or_id: ParsingSpec | str) -> bool:
+        """Check whether a specification or format_id represents an unapproved draft.
+
+        A specification is considered an unapproved draft if:
+        - Its format_id starts with self.draft_prefix (or default 'draft_')
+        - Its metadata indicates is_active is False
+        - Its metadata status is 'proposed' or 'draft'
+        """
+        if isinstance(spec_or_id, str):
+            format_id = spec_or_id
+            if self.draft_prefix and format_id.startswith(self.draft_prefix):
+                return True
+            return format_id.startswith("draft_")
+
+        spec = spec_or_id
+        if self.draft_prefix and spec.format_id.startswith(self.draft_prefix):
+            return True
+        if spec.format_id.startswith("draft_"):
+            return True
+        if spec.metadata.get("is_active") is False:
+            return True
+        if spec.metadata.get("status") in ("proposed", "draft"):
+            return True
+        return False
+
+    def list_drafts(self, ignore_invalid: bool = True) -> list[ParsingSpec]:
+        """Return all saved unapproved draft specifications in specs_dir.
+
+        Args:
+            ignore_invalid: If True, skip invalid or unparseable files.
+
+        Returns:
+            Sorted list of draft ParsingSpec instances.
+        """
+        drafts: list[ParsingSpec] = []
+        for format_id in self.list_formats():
+            try:
+                spec = self.load(format_id)
+                if self.is_draft(spec):
+                    drafts.append(spec)
+            except SpecValidationError:
+                if not ignore_invalid:
+                    raise
+        return sorted(drafts, key=lambda s: s.format_id)
+
+    def approve_draft(
+        self,
+        draft_format_id: str,
+        overwrite: bool = False,
+        delete_draft: bool = True,
+    ) -> ParsingSpec:
+        """Approve a saved draft parsing specification and activate it.
+
+        Validates that the target is a draft, derives the active format_id by
+        stripping the draft prefix, updates fingerprint format_id, sets
+        metadata is_active=True and status='active', and saves it as an active specification.
+
+        Args:
+            draft_format_id: Format ID of the draft specification to approve.
+            overwrite: If True, allow replacing an existing active specification.
+                       If False and active specification exists, raises DuplicateSpecError.
+            delete_draft: If True, delete the original draft file after successful activation.
+
+        Returns:
+            The newly activated ParsingSpec instance.
+
+        Raises:
+            SpecNotFoundError: If the draft specification does not exist.
+            SpecValidationError: If the specified format is not a draft proposal.
+            DuplicateSpecError: If an active specification exists and overwrite is False.
+        """
+        target_id = draft_format_id
+        if not self.exists(target_id) and self.draft_prefix and self.exists(f"{self.draft_prefix}{target_id}"):
+            target_id = f"{self.draft_prefix}{target_id}"
+
+        if not self.exists(target_id):
+            raise SpecNotFoundError(f"Draft specification '{draft_format_id}' not found.")
+
+        draft_spec = self.load(target_id)
+        if not self.is_draft(draft_spec):
+            raise SpecValidationError(
+                f"Specification '{draft_format_id}' is not an unapproved draft proposal."
+            )
+
+        if self.draft_prefix and draft_spec.format_id.startswith(self.draft_prefix):
+            active_format_id = draft_spec.format_id[len(self.draft_prefix):]
+        elif draft_spec.format_id.startswith("draft_"):
+            active_format_id = draft_spec.format_id[len("draft_"):]
+        else:
+            active_format_id = draft_spec.format_id
+
+        if not active_format_id:
+            raise SpecValidationError(
+                f"Cannot derive active format_id from draft '{draft_spec.format_id}'."
+            )
+
+        if self.exists(active_format_id) and not overwrite:
+            raise DuplicateSpecError(
+                f"Active specification '{active_format_id}' already exists. Use overwrite option to replace it."
+            )
+
+        active_spec = draft_spec.model_copy(deep=True)
+        active_spec.format_id = active_format_id
+        active_spec.metadata["is_active"] = True
+        active_spec.metadata["status"] = "active"
+        if active_spec.fingerprint is not None:
+            active_spec.fingerprint = active_spec.fingerprint.model_copy(
+                update={"format_id": active_format_id}
+            )
+
+        self.save(active_spec, overwrite=overwrite)
+
+        if delete_draft and target_id != active_format_id:
+            self.delete(target_id)
+
+        return active_spec
+
     def match_spec_by_fingerprint(
         self,
         query_fingerprint: FormatFingerprint,
@@ -268,6 +395,9 @@ class SpecStore:
         near_match_threshold: float = 0.65,
     ) -> tuple[ParsingSpec | None, FingerprintMatchResult]:
         """Match a document fingerprint against all stored specifications having fingerprints.
+
+        Excludes unapproved drafts and inactive specifications so they are never
+        selected by the normal pipeline.
 
         Args:
             query_fingerprint: FormatFingerprint of the query document.
@@ -279,9 +409,15 @@ class SpecStore:
         """
         library: dict[str, FormatFingerprint] = {}
         for spec in self.list_specs(ignore_invalid=True):
+            # Normal fingerprint matching must strictly exclude draft IDs/specifications.
+            # Unapproved drafts must never be selected by the normal pipeline.
+            if self.is_draft(spec):
+                continue
             if spec.fingerprint is not None:
-                # Use format_id as library key
-                library[spec.format_id] = spec.fingerprint
+                fp = spec.fingerprint
+                if not fp.format_id:
+                    fp = fp.model_copy(update={"format_id": spec.format_id})
+                library[spec.format_id] = fp
 
         if not library:
             empty_result = FingerprintMatchResult(
@@ -301,6 +437,9 @@ class SpecStore:
 
         matched_spec: ParsingSpec | None = None
         if result.status == FingerprintMatchStatus.KNOWN and result.matched_format_id:
-            matched_spec = self.get(result.matched_format_id)
+            if not self.is_draft(result.matched_format_id):
+                candidate = self.get(result.matched_format_id)
+                if candidate and not self.is_draft(candidate):
+                    matched_spec = candidate
 
         return matched_spec, result

@@ -88,6 +88,12 @@ class Pipeline:
         self.engine = engine or ParsingEngine()
         self.validator = validator or Validator(config=self.config.validator_config)
         self.learner = learner
+        if self.learner is None and self.config.enable_learning:
+            self.learner = Learner(
+                spec_store=self.spec_store,
+                engine=self.engine,
+                validator=self.validator,
+            )
 
     # -----------------------------------------------------------------------
     # Primary Entry Points
@@ -465,12 +471,33 @@ class Pipeline:
         # ── Step 4: Handle Unknown Format (Optional Learner or Quarantine) ───
         learning_res: LearningResult | None = None
         if match_result.status == FingerprintMatchStatus.UNKNOWN or matched_spec is None:
-            if self.config.enable_learning and self.learner is not None:
-                learning_res = self.learner.learn(
-                    doc=doc,
-                    statement_type=statement_type,
-                    auto_activate=self.config.auto_activate_learned_spec,
-                )
+            if self.config.enable_learning:
+                if self.learner is None:
+                    self.learner = Learner(
+                        spec_store=self.spec_store,
+                        engine=self.engine,
+                        validator=self.validator,
+                    )
+                try:
+                    learning_res = self.learner.learn(
+                        doc=doc,
+                        statement_type=statement_type,
+                        auto_activate=self.config.auto_activate_learned_spec,
+                    )
+                except Exception as exc:
+                    errors.append(f"Specification learning failed: {exc}")
+                    return self._record_and_return_simple_status(
+                        doc_id=doc_id,
+                        status=DocumentStatus.NEEDS_REVIEW,
+                        file_path=file_path,
+                        file_hash=file_hash,
+                        statement_type=statement_type,
+                        fingerprint=fp,
+                        fingerprint_match=match_result,
+                        classification=cls_result,
+                        errors=errors,
+                    )
+
                 if learning_res.status == ProposalStatus.ACCEPTED and learning_res.spec is not None:
                     matched_spec = learning_res.spec
                 elif learning_res.status == ProposalStatus.PROPOSED:
@@ -494,7 +521,7 @@ class Pipeline:
                     errors.append(learning_res.error_message or "Specification learning failed after repair loop.")
                     return self._record_and_return_simple_status(
                         doc_id=doc_id,
-                        status=DocumentStatus.LEARNING_FAILED,
+                        status=DocumentStatus.NEEDS_REVIEW,
                         file_path=file_path,
                         file_hash=file_hash,
                         statement_type=statement_type,

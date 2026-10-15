@@ -5,3 +5,7 @@ __pycache__/
 samples/real/
 samples/synthetic/
 
+
+# Local and private files
+.DS_Store
+samples/external/

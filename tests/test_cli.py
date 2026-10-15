@@ -434,3 +434,213 @@ class TestCliVerboseAndEntrypoint:
                 code = main(argv=None)
                 assert code == 0
                 assert "pms-parser" in mock_out.getvalue()
+
+
+class TestCliLearnFlag:
+    """Tests for CLI --learn opt-in flag."""
+
+    def test_cli_help_includes_learn(self):
+        """CLI --help displays --learn / -l option."""
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["--help"], out=out, err=err)
+        assert code == 0
+        help_text = out.getvalue()
+        assert "--learn" in help_text
+        assert "-l" in help_text
+
+    def test_cli_learn_flag_configures_pipeline(self, tmp_path: Path):
+        """Passing --learn enables learning on Pipeline instance."""
+        from src.pipeline.pipeline import Pipeline
+        from src.pipeline.models import PipelineConfig
+
+        sample_pdf = tmp_path / "unknown_stmt.pdf"
+        sample_pdf.write_bytes(b"%PDF-1.4 stmt")
+
+        pipe = Pipeline(config=PipelineConfig(enable_learning=False))
+        assert pipe.config.enable_learning is False
+
+        with patch.object(pipe, "process_file", return_value=_make_result(sample_pdf, DocumentStatus.PARSED)):
+            out = io.StringIO()
+            err = io.StringIO()
+            code = main([str(sample_pdf), "--learn"], pipeline=pipe, out=out, err=err)
+            assert code == 0
+            assert pipe.config.enable_learning is True
+            assert pipe.config.auto_activate_learned_spec is False
+
+    def test_cli_default_without_learn_keeps_learning_disabled(self, tmp_path: Path):
+        """Omitting --learn keeps learning disabled on Pipeline instance."""
+        from src.pipeline.pipeline import Pipeline
+        from src.pipeline.models import PipelineConfig
+
+        sample_pdf = tmp_path / "unknown_stmt.pdf"
+        sample_pdf.write_bytes(b"%PDF-1.4 stmt")
+
+        pipe = Pipeline(config=PipelineConfig(enable_learning=False))
+        assert pipe.config.enable_learning is False
+
+        with patch.object(pipe, "process_file", return_value=_make_result(sample_pdf, DocumentStatus.NEEDS_REVIEW)):
+            out = io.StringIO()
+            err = io.StringIO()
+            code = main([str(sample_pdf)], pipeline=pipe, out=out, err=err)
+            assert pipe.config.enable_learning is False
+
+    def test_cli_short_learn_flag(self, tmp_path: Path):
+        """Short flag -l enables learning."""
+        from src.pipeline.pipeline import Pipeline
+        from src.pipeline.models import PipelineConfig
+
+        sample_pdf = tmp_path / "unknown_stmt.pdf"
+        sample_pdf.write_bytes(b"%PDF-1.4 stmt")
+
+        pipe = Pipeline(config=PipelineConfig(enable_learning=False))
+
+        with patch.object(pipe, "process_file", return_value=_make_result(sample_pdf, DocumentStatus.PARSED)):
+            out = io.StringIO()
+            err = io.StringIO()
+            code = main([str(sample_pdf), "-l"], pipeline=pipe, out=out, err=err)
+            assert code == 0
+            assert pipe.config.enable_learning is True
+
+
+class TestCliDraftManagement:
+    """Tests CLI commands for listing and explicitly approving draft proposals."""
+
+    def test_cli_list_drafts_empty(self, tmp_path: Path):
+        """Listing drafts when none exist prints clear message and returns 0."""
+        from src.specs.store import SpecStore
+        store = SpecStore(specs_dir=tmp_path)
+
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["list-drafts"], spec_store=store, out=out, err=err)
+
+        assert code == 0
+        assert "No saved draft specifications found." in out.getvalue()
+
+        # Flag style also works
+        out2 = io.StringIO()
+        err2 = io.StringIO()
+        code2 = main(["--list-drafts"], spec_store=store, out=out2, err=err2)
+        assert code2 == 0
+        assert "No saved draft specifications found." in out2.getvalue()
+
+    def test_cli_list_drafts_displays_pending_proposals(self, tmp_path: Path):
+        """Listing drafts displays format ID and status for saved proposals."""
+        from src.specs.models import ParsingSpec
+        from src.specs.store import SpecStore
+        store = SpecStore(specs_dir=tmp_path)
+
+        draft = ParsingSpec(
+            format_id="draft_fidelity_pms",
+            description="Learned Fidelity layout",
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        store.save(draft)
+
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["list-drafts"], spec_store=store, out=out, err=err)
+
+        assert code == 0
+        output = out.getvalue()
+        assert "Saved Draft Proposals (1):" in output
+        assert "draft_fidelity_pms" in output
+        assert "Learned Fidelity layout" in output
+
+    def test_cli_approve_draft_activates_specification(self, tmp_path: Path):
+        """Approving a draft creates the active specification and returns exit code 0."""
+        from src.specs.models import ParsingSpec
+        from src.specs.store import SpecStore
+        from src.fingerprint.models import FormatFingerprint
+        store = SpecStore(specs_dir=tmp_path)
+
+        fp = FormatFingerprint(
+            format_id="draft_quant_pms",
+            generator_tool="ReportTool",
+            text_hashes=["t1", "t2"],
+            structural_anchors=["Summary Section"],
+        )
+        draft = ParsingSpec(
+            format_id="draft_quant_pms",
+            fingerprint=fp,
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        store.save(draft)
+
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["approve", "draft_quant_pms"], spec_store=store, out=out, err=err)
+
+        assert code == 0
+        output = out.getvalue()
+        assert "Successfully approved draft 'draft_quant_pms' -> active specification 'quant_pms'." in output
+
+        # Spec is activated in store
+        assert store.exists("quant_pms") is True
+        active_spec = store.load("quant_pms")
+        assert active_spec.format_id == "quant_pms"
+        assert active_spec.metadata["is_active"] is True
+        assert active_spec.metadata["status"] == "active"
+        assert active_spec.fingerprint.format_id == "quant_pms"
+
+        # Draft file is cleaned up
+        assert store.exists("draft_quant_pms") is False
+
+    def test_cli_approve_requires_overwrite_if_active_exists(self, tmp_path: Path):
+        """Approval rejects silent overwrite when an active spec exists, unless --overwrite is supplied."""
+        from src.specs.models import ParsingSpec
+        from src.specs.store import SpecStore
+        store = SpecStore(specs_dir=tmp_path)
+
+        active = ParsingSpec(
+            format_id="my_fund",
+            description="Existing version",
+            metadata={"is_active": True, "status": "active"},
+        )
+        draft = ParsingSpec(
+            format_id="draft_my_fund",
+            description="Proposed version",
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        store.save(active)
+        store.save(draft)
+
+        # Without --overwrite: fails and warns user
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["approve", "draft_my_fund"], spec_store=store, out=out, err=err)
+
+        assert code == 1
+        err_output = err.getvalue()
+        assert "already exists" in err_output
+        assert "--overwrite" in err_output
+        assert store.load("my_fund").description == "Existing version"
+
+        # With --overwrite: succeeds
+        out2 = io.StringIO()
+        err2 = io.StringIO()
+        code2 = main(["approve", "draft_my_fund", "--overwrite"], spec_store=store, out=out2, err=err2)
+
+        assert code2 == 0
+        assert store.load("my_fund").description == "Proposed version"
+
+    def test_cli_approve_missing_argument_returns_usage_error(self):
+        """Invoking approve without a draft ID returns usage error (code 2)."""
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["approve"], out=out, err=err)
+
+        assert code == 2
+
+    def test_cli_approve_nonexistent_draft_returns_error(self, tmp_path: Path):
+        """Attempting to approve a non-existent draft ID returns exit code 1."""
+        from src.specs.store import SpecStore
+        store = SpecStore(specs_dir=tmp_path)
+
+        out = io.StringIO()
+        err = io.StringIO()
+        code = main(["approve", "draft_missing_spec"], spec_store=store, out=out, err=err)
+
+        assert code == 1
+        assert "not found" in err.getvalue()

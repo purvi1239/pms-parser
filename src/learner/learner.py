@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -45,6 +46,17 @@ from src.learner.prompts import (
     build_initial_prompt,
     build_repair_prompt,
 )
+
+
+def _clean_format_id(val: Any) -> str | None:
+    """Validate and sanitize a format identifier."""
+    if not val or not isinstance(val, str):
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", val.strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("._")
+    if cleaned and re.match(r"^[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*$", cleaned):
+        return cleaned
+    return None
 
 
 class Learner:
@@ -85,10 +97,9 @@ class Learner:
         Returns:
             LearningResult containing status, spec, parse result, and validation findings.
         """
-        fmt_id = format_id or f"format_{int(time.time())}"
         return self._execute_learning_loop(
             doc=doc,
-            format_id=fmt_id,
+            format_id=format_id,
             statement_type=statement_type,
             feedback=None,
             base_spec=None,
@@ -174,21 +185,29 @@ class Learner:
 
     def save_draft_proposal(self, spec: ParsingSpec) -> Path:
         """Save a validated proposal separately with draft prefix to preserve active specs."""
-        draft_id = f"{self.config.draft_prefix}{spec.format_id}"
+        prefix = self.config.draft_prefix
+        if spec.format_id.startswith(prefix):
+            draft_id = spec.format_id
+        else:
+            draft_id = f"{prefix}{spec.format_id}"
         draft_spec = spec.model_copy(deep=True)
         draft_spec.format_id = draft_id
         draft_spec.metadata["is_active"] = False
         draft_spec.metadata["status"] = "proposed"
+        if draft_spec.fingerprint is not None:
+            draft_spec.fingerprint = draft_spec.fingerprint.model_copy(
+                update={"format_id": draft_id}
+            )
         return self.spec_store.save(draft_spec, overwrite=True)
 
     def _execute_learning_loop(
         self,
         doc: DocumentIR,
-        format_id: str,
-        statement_type: StatementType,
-        feedback: HumanFeedback | None,
-        base_spec: ParsingSpec | None,
-        auto_activate: bool | None,
+        format_id: str | None = None,
+        statement_type: StatementType = StatementType.PMS,
+        feedback: HumanFeedback | None = None,
+        base_spec: ParsingSpec | None = None,
+        auto_activate: bool | None = None,
     ) -> LearningResult:
         """Core iterative learning and repair loop."""
         should_auto_activate = (
@@ -207,11 +226,16 @@ class Learner:
 
         for attempt_idx in range(1, max_attempts + 1):
             # 1. Build prompt
+            prompt_fid = (
+                last_spec.format_id
+                if (last_spec and last_spec.format_id)
+                else (_clean_format_id(format_id) or "format_unknown")
+            )
             if attempt_idx == 1:
                 if feedback is not None:
                     sys_prompt, user_prompt = build_feedback_prompt(
                         doc=doc,
-                        format_id=format_id,
+                        format_id=prompt_fid,
                         feedback=feedback,
                         base_spec_json=base_spec.to_json() if base_spec else None,
                         redactor=self.redactor,
@@ -219,7 +243,7 @@ class Learner:
                 else:
                     sys_prompt, user_prompt = build_initial_prompt(
                         doc=doc,
-                        format_id=format_id,
+                        format_id=prompt_fid,
                         statement_type=statement_type,
                         redactor=self.redactor,
                     )
@@ -229,7 +253,7 @@ class Learner:
                 prev_warns = last_parse_result.warnings if last_parse_result else []
                 sys_prompt, user_prompt = build_repair_prompt(
                     doc=doc,
-                    format_id=format_id,
+                    format_id=prompt_fid,
                     previous_spec_json=prev_json,
                     errors=last_errors,
                     warnings=prev_warns,
@@ -243,7 +267,7 @@ class Learner:
                 system_prompt=sys_prompt,
                 temperature=self.config.temperature,
                 model=self.config.model,
-                metadata={"format_id": format_id, "attempt": attempt_idx},
+                metadata={"format_id": prompt_fid, "attempt": attempt_idx},
             )
 
             try:
@@ -272,9 +296,20 @@ class Learner:
                     schema_errors.append(f"Response is not valid JSON: {err}")
 
             if raw_dict is not None:
-                # Ensure format_id is populated
-                if not raw_dict.get("format_id"):
-                    raw_dict["format_id"] = format_id
+                llm_candidate_fid = _clean_format_id(raw_dict.get("format_id"))
+                requested_clean_fid = _clean_format_id(format_id)
+
+                if llm_candidate_fid:
+                    resolved_fid = llm_candidate_fid
+                elif requested_clean_fid:
+                    resolved_fid = requested_clean_fid
+                else:
+                    resolved_fid = f"format_{int(time.time())}"
+
+                raw_dict["format_id"] = resolved_fid
+
+                if not raw_dict.get("statement_type"):
+                    raw_dict["statement_type"] = statement_type.value
 
                 try:
                     candidate_spec = ParsingSpec.from_dict(raw_dict)
@@ -295,7 +330,8 @@ class Learner:
 
             # Attach extracted fingerprint to the candidate spec
             try:
-                candidate_spec.fingerprint = extract_fingerprint(doc)
+                candidate_spec.fingerprint = extract_fingerprint(doc, format_id=candidate_spec.format_id)
+                candidate_spec.fingerprint.format_id = candidate_spec.format_id
             except Exception:
                 pass
 
@@ -352,12 +388,13 @@ class Learner:
                     # Mark as proposed draft; DO NOT overwrite active spec
                     candidate_spec.metadata["status"] = "proposed"
                     candidate_spec.metadata["is_active"] = False
+                    self.save_draft_proposal(candidate_spec)
                     proposal_status = ProposalStatus.PROPOSED
                     doc_status = DocumentStatus.NEEDS_REVIEW
                     is_active = False
 
                 return LearningResult(
-                    format_id=format_id,
+                    format_id=candidate_spec.format_id,
                     status=proposal_status,
                     document_status=doc_status,
                     spec=candidate_spec,
@@ -372,8 +409,13 @@ class Learner:
 
         # Retries exhausted without satisfying all checks
         all_repair_history = [e for att in attempts for e in att.errors]
+        failed_fid = (
+            last_spec.format_id
+            if (last_spec and last_spec.format_id)
+            else (_clean_format_id(format_id) or f"format_{int(time.time())}")
+        )
         return LearningResult(
-            format_id=format_id,
+            format_id=failed_fid,
             status=ProposalStatus.REJECTED,
             document_status=DocumentStatus.LEARNING_FAILED,
             spec=last_spec,

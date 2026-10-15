@@ -462,10 +462,10 @@ class TestPipelineUnknownFormatAndLearner:
         assert res.status == DocumentStatus.NEEDS_REVIEW
         assert res.is_quarantined is True
 
-    def test_unknown_format_learner_failure_marked_learning_failed(
+    def test_unknown_format_learner_failure_marked_needs_review(
         self, store, spec_store, sample_pms_ir
     ):
-        """Learner rejects proposal after exhausted repairs -> LEARNING_FAILED."""
+        """Learner rejects proposal after exhausted repairs -> returns NEEDS_REVIEW."""
         config = PipelineConfig(enable_learning=True)
 
         fake_learner = MagicMock(spec=Learner)
@@ -481,7 +481,9 @@ class TestPipelineUnknownFormatAndLearner:
         pipeline = Pipeline(store=store, spec_store=spec_store, learner=fake_learner, config=config)
         res = pipeline.process_document(sample_pms_ir, file_path="failed_format.pdf")
 
-        assert res.status == DocumentStatus.LEARNING_FAILED
+        assert res.status == DocumentStatus.NEEDS_REVIEW
+        assert res.is_quarantined is True
+        assert res.learning_result.status == ProposalStatus.REJECTED
 
 
 class TestPipelineValidationOutcomes:
@@ -562,3 +564,190 @@ class TestPipelineBatchAndReparse:
         attempts = store.list_processing_attempts(initial_res.document_id)
         assert len(attempts) >= 2
         assert attempts[-1].attempt_number == 2
+
+
+class TestOneTimeLearningAndSpecReuse:
+    """Core tests for one-time LLM learning and zero-LLM specification reuse."""
+
+    def test_first_time_learning_persists_spec_and_reused_with_zero_llm_calls_after_restart(
+        self, temp_specs_dir, temp_db_path, format_a_spec, sample_pms_ir
+    ):
+        """First statement learns spec and persists to disk; restart reuses it with 0 LLM calls."""
+        # Step 1: Initial process with learning enabled on an unknown format
+        spec_store_1 = SpecStore(specs_dir=temp_specs_dir)
+        store_1 = StatementStore(db_path=temp_db_path)
+        assert len(spec_store_1.list_formats()) == 0
+
+        # Configure fake LLM that produces format_a_spec when prompted
+        fake_llm_1 = FakeLLMAdapter(default_response=format_a_spec.to_dict())
+        learner_1 = Learner(
+            llm_adapter=fake_llm_1,
+            spec_store=spec_store_1,
+        )
+        config_1 = PipelineConfig(enable_learning=True, auto_activate_learned_spec=True)
+        pipeline_1 = Pipeline(
+            store=store_1,
+            spec_store=spec_store_1,
+            learner=learner_1,
+            config=config_1,
+        )
+
+        res1 = pipeline_1.process_document(sample_pms_ir, file_path="stmt_month_1.pdf")
+        assert res1.status == DocumentStatus.PARSED
+        assert res1.format_id == format_a_spec.format_id
+        # LLM was invoked exactly once for the first statement
+        assert len(fake_llm_1.ledger.records) == 1
+
+        # Verify durable storage on disk
+        persisted_file = temp_specs_dir / f"{format_a_spec.format_id}.json"
+        assert persisted_file.exists()
+
+        # Step 2: Simulate process restart / separate invocation
+        # Create a completely fresh SpecStore and Pipeline from the persisted directory
+        spec_store_2 = SpecStore(specs_dir=temp_specs_dir)
+        store_2 = StatementStore(db_path=temp_db_path)
+        assert format_a_spec.format_id in spec_store_2.list_formats()
+
+        # Create a fresh LLM adapter that records any attempt to call it
+        fake_llm_2 = FakeLLMAdapter()
+        learner_2 = Learner(
+            llm_adapter=fake_llm_2,
+            spec_store=spec_store_2,
+        )
+        # Even with learning enabled on this new pipeline, it MUST NOT call LLM
+        config_2 = PipelineConfig(enable_learning=True, auto_activate_learned_spec=True)
+        pipeline_2 = Pipeline(
+            store=store_2,
+            spec_store=spec_store_2,
+            learner=learner_2,
+            config=config_2,
+        )
+
+        # Create a subsequent statement with the same layout/template but different values
+        p2_words = [
+            WordIR(text="Kotak", page_number=1, bbox=BBox(x0=50, top=30, x1=90, bottom=42)),
+            WordIR(text="Wealth", page_number=1, bbox=BBox(x0=95, top=30, x1=140, bottom=42)),
+            WordIR(text="PMS", page_number=1, bbox=BBox(x0=145, top=30, x1=170, bottom=42)),
+            WordIR(text="Client", page_number=1, bbox=BBox(x0=50, top=50, x1=80, bottom=62)),
+            WordIR(text="ID:", page_number=1, bbox=BBox(x0=82, top=50, x1=95, bottom=62)),
+            WordIR(text="KOTAK-7711", page_number=1, bbox=BBox(x0=100, top=50, x1=160, bottom=62)),
+            WordIR(text="Period:", page_number=1, bbox=BBox(x0=50, top=65, x1=85, bottom=77)),
+            WordIR(text="01/04/2026", page_number=1, bbox=BBox(x0=90, top=65, x1=140, bottom=77)),
+            WordIR(text="to", page_number=1, bbox=BBox(x0=145, top=65, x1=155, bottom=77)),
+            WordIR(text="30/06/2026", page_number=1, bbox=BBox(x0=160, top=65, x1=210, bottom=77)),
+        ]
+        sample_pms_ir_2 = DocumentIR(
+            page_count=1,
+            pages=[
+                PageIR(
+                    page_number=1,
+                    width=595.0,
+                    height=842.0,
+                    words=p2_words,
+                    tables=sample_pms_ir.pages[0].tables,
+                )
+            ],
+            metadata={"Producer": "TestReporter"},
+        )
+
+        res2 = pipeline_2.process_document(sample_pms_ir_2, file_path="stmt_month_2.pdf")
+        assert res2.status == DocumentStatus.PARSED
+        assert res2.format_id == format_a_spec.format_id
+        # Zero additional LLM calls!
+        assert len(fake_llm_2.ledger.records) == 0
+
+        # Step 3: Subsequent statement with learning disabled entirely
+        temp_db_path_3 = temp_db_path.parent / "pipeline_test_step3.db"
+        store_3 = StatementStore(db_path=temp_db_path_3)
+        fake_llm_3 = FakeLLMAdapter()
+        learner_3 = Learner(
+            llm_adapter=fake_llm_3,
+            spec_store=spec_store_2,
+        )
+        pipeline_3 = Pipeline(
+            store=store_3,
+            spec_store=spec_store_2,
+            learner=learner_3,
+            config=PipelineConfig(enable_learning=False),
+        )
+        res3 = pipeline_3.process_document(sample_pms_ir_2, file_path="stmt_month_3.pdf")
+        assert res3.status == DocumentStatus.PARSED
+        assert res3.format_id == format_a_spec.format_id
+        assert len(fake_llm_3.ledger.records) == 0
+
+    def test_unknown_format_learning_disabled_returns_needs_review_zero_llm_calls(
+        self, temp_specs_dir, temp_db_path, sample_pms_ir
+    ):
+        """Unknown format with learning disabled returns NEEDS_REVIEW with zero LLM calls."""
+        spec_store = SpecStore(specs_dir=temp_specs_dir)
+        store = StatementStore(db_path=temp_db_path)
+        fake_llm = FakeLLMAdapter()
+        learner = Learner(llm_adapter=fake_llm, spec_store=spec_store)
+
+        pipeline = Pipeline(
+            store=store,
+            spec_store=spec_store,
+            learner=learner,
+            config=PipelineConfig(enable_learning=False),
+        )
+
+        res = pipeline.process_document(sample_pms_ir, file_path="unknown.pdf")
+        assert res.status == DocumentStatus.NEEDS_REVIEW
+        assert res.is_quarantined is True
+        assert len(fake_llm.ledger.records) == 0
+        assert len(spec_store.list_formats()) == 0
+
+    def test_failed_learning_returns_needs_review_and_does_not_save_spec(
+        self, temp_specs_dir, temp_db_path, sample_pms_ir
+    ):
+        """Learning failure returns NEEDS_REVIEW and never saves unvalidated specs."""
+        spec_store = SpecStore(specs_dir=temp_specs_dir)
+        store = StatementStore(db_path=temp_db_path)
+        fake_llm = FakeLLMAdapter(default_response="MALFORMED_NON_JSON")
+        learner = Learner(llm_adapter=fake_llm, spec_store=spec_store)
+
+        pipeline = Pipeline(
+            store=store,
+            spec_store=spec_store,
+            learner=learner,
+            config=PipelineConfig(enable_learning=True, auto_activate_learned_spec=True),
+        )
+
+        res = pipeline.process_document(sample_pms_ir, file_path="unlearnable.pdf")
+        assert res.status == DocumentStatus.NEEDS_REVIEW
+        assert res.is_quarantined is True
+        # SpecStore remains untouched
+        assert len(spec_store.list_formats()) == 0
+
+    def test_suspected_drift_quarantined_for_review_without_llm_call(
+        self, temp_specs_dir, temp_db_path, format_a_spec, sample_pms_ir
+    ):
+        """Drift-suspected document is quarantined for review without invoking LLM."""
+        spec_store = SpecStore(specs_dir=temp_specs_dir)
+        spec_store.save(format_a_spec)
+        store = StatementStore(db_path=temp_db_path)
+        fake_llm = FakeLLMAdapter()
+        learner = Learner(llm_adapter=fake_llm, spec_store=spec_store)
+
+        pipeline = Pipeline(
+            store=store,
+            spec_store=spec_store,
+            learner=learner,
+            config=PipelineConfig(enable_learning=True, auto_activate_learned_spec=True),
+        )
+
+        drift_match = FingerprintMatchResult(
+            status=FingerprintMatchStatus.DRIFT_SUSPECTED,
+            similarity_score=0.72,
+            matched_format_id=format_a_spec.format_id,
+            reasons=["Table 0 headers partially changed"],
+        )
+
+        with patch.object(spec_store, "match_spec_by_fingerprint", return_value=(None, drift_match)):
+            res = pipeline.process_document(sample_pms_ir, file_path="drifted.pdf")
+
+        assert res.status == DocumentStatus.DRIFT_SUSPECTED
+        assert res.is_quarantined is True
+        assert res.format_id == format_a_spec.format_id
+        # LLM was never called
+        assert len(fake_llm.ledger.records) == 0

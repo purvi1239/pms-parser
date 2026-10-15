@@ -658,3 +658,130 @@ def test_spec_store_valid_format_ids_allowed(temp_store: SpecStore):
         assert loaded.format_id == fid
 
     assert temp_store.list_formats() == sorted(valid_ids)
+
+
+# ---------------------------------------------------------------------------
+# 12. SpecStore Draft Proposals and Approval Tests
+# ---------------------------------------------------------------------------
+
+class TestSpecStoreDraftsAndApproval:
+    """Tests listing and explicit approval of draft parsing specifications."""
+
+    def test_list_drafts_filters_active_specs(self, temp_store: SpecStore):
+        """list_drafts returns only unapproved draft specifications."""
+        active = ParsingSpec(format_id="active_pms", metadata={"is_active": True, "status": "active"})
+        draft1 = ParsingSpec(format_id="draft_fmt_1", metadata={"is_active": False, "status": "proposed"})
+        draft2 = ParsingSpec(format_id="draft_fmt_2", metadata={"is_active": False, "status": "proposed"})
+
+        temp_store.save(active)
+        temp_store.save(draft1)
+        temp_store.save(draft2)
+
+        drafts = temp_store.list_drafts()
+        draft_ids = [d.format_id for d in drafts]
+
+        assert "active_pms" not in draft_ids
+        assert draft_ids == ["draft_fmt_1", "draft_fmt_2"]
+
+    def test_approve_draft_promotes_specification(self, temp_store: SpecStore):
+        """Approving a draft strips prefix, updates fingerprint and metadata, and activates spec."""
+        fp = FormatFingerprint(
+            format_id="draft_scheme_alpha",
+            generator_tool="ReportGenerator v1",
+            text_hashes=["hash1", "hash2"],
+            structural_anchors=["Portfolio Valuation"],
+        )
+        draft = ParsingSpec(
+            format_id="draft_scheme_alpha",
+            description="Learned candidate draft",
+            fingerprint=fp,
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        temp_store.save(draft)
+
+        approved = temp_store.approve_draft("draft_scheme_alpha")
+
+        assert approved.format_id == "scheme_alpha"
+        assert approved.metadata["is_active"] is True
+        assert approved.metadata["status"] == "active"
+        assert approved.fingerprint is not None
+        assert approved.fingerprint.format_id == "scheme_alpha"
+
+        # Active spec exists in store
+        assert temp_store.exists("scheme_alpha") is True
+        loaded = temp_store.load("scheme_alpha")
+        assert loaded.format_id == "scheme_alpha"
+        assert loaded.metadata["is_active"] is True
+
+        # Draft file is cleaned up
+        assert temp_store.exists("draft_scheme_alpha") is False
+        assert len(temp_store.list_drafts()) == 0
+
+    def test_approve_draft_requires_overwrite_if_active_exists(self, temp_store: SpecStore):
+        """Approving a draft when active spec exists requires explicit overwrite=True."""
+        existing = ParsingSpec(
+            format_id="alpha_format",
+            description="Old active spec",
+            metadata={"is_active": True, "status": "active"},
+        )
+        draft = ParsingSpec(
+            format_id="draft_alpha_format",
+            description="New replacement draft",
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        temp_store.save(existing)
+        temp_store.save(draft)
+
+        # Without overwrite: raises DuplicateSpecError
+        with pytest.raises(DuplicateSpecError) as exc_info:
+            temp_store.approve_draft("draft_alpha_format", overwrite=False)
+        assert "already exists" in str(exc_info.value)
+
+        # Original active spec remains unchanged
+        assert temp_store.load("alpha_format").description == "Old active spec"
+
+        # With overwrite: successfully replaces active spec
+        approved = temp_store.approve_draft("draft_alpha_format", overwrite=True)
+        assert approved.format_id == "alpha_format"
+        assert temp_store.load("alpha_format").description == "New replacement draft"
+
+    def test_approve_non_draft_rejected(self, temp_store: SpecStore):
+        """Attempting to approve a specification that is already active raises SpecValidationError."""
+        active = ParsingSpec(format_id="already_active", metadata={"is_active": True, "status": "active"})
+        temp_store.save(active)
+
+        with pytest.raises(SpecValidationError) as exc_info:
+            temp_store.approve_draft("already_active")
+        assert "not an unapproved draft proposal" in str(exc_info.value)
+
+    def test_approve_nonexistent_draft_rejected(self, temp_store: SpecStore):
+        """Attempting to approve a missing draft raises SpecNotFoundError."""
+        with pytest.raises(SpecNotFoundError):
+            temp_store.approve_draft("draft_does_not_exist")
+
+    def test_unapproved_draft_not_selected_by_fingerprint_until_approved(self, temp_store: SpecStore):
+        """Drafts are ignored by match_spec_by_fingerprint until approved."""
+        fp = FormatFingerprint(
+            format_id="draft_beta",
+            generator_tool="Vendor Engine 4",
+            text_hashes=["th1", "th2", "th3"],
+            structural_anchors=["Account Statement", "Total Assets"],
+        )
+        draft = ParsingSpec(
+            format_id="draft_beta",
+            fingerprint=fp,
+            metadata={"is_active": False, "status": "proposed"},
+        )
+        temp_store.save(draft)
+
+        # Before approval: fingerprint matching returns UNKNOWN / None
+        matched_spec, result = temp_store.match_spec_by_fingerprint(fp)
+        assert matched_spec is None
+        assert result.matched_format_id is None
+
+        # After approval: fingerprint matching finds active beta spec
+        temp_store.approve_draft("draft_beta")
+        matched_spec, result = temp_store.match_spec_by_fingerprint(fp)
+        assert matched_spec is not None
+        assert matched_spec.format_id == "beta"
+        assert result.matched_format_id == "beta"
