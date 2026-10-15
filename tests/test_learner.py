@@ -563,3 +563,240 @@ class TestPIIRedactionInPrompts:
         assert "[REDACTED_PAN]" in user_prompt
         assert "Rameshwar Saxena" not in user_prompt
         assert "[REDACTED_NAME]" in user_prompt
+
+
+# ---------------------------------------------------------------------------
+# 7. Bounded Context and Cross-Page Section Preservation
+# ---------------------------------------------------------------------------
+
+class TestBoundedDocContext:
+    def test_bounded_context_preserves_headings_and_sections_across_pages(self):
+        from src.learner.prompts import build_bounded_doc_context, build_bounded_doc_text
+        from src.redactor import Redactor
+        from unittest.mock import MagicMock
+
+        # Page 1: Metadata + 50 holdings
+        p1_lines = [
+            "Pinnacle Wealth PMS Statement",
+            "Client ID: PWM-9999",
+            "PAN: ABCDE1234F",
+            "Portfolio Holdings",
+            "Security Name ISIN Quantity Price Market Value Weight",
+        ]
+        for i in range(1, 51):
+            p1_lines.append(f"Security {i:03d} INE{i:09d} 100 10.00 1000.00 1.0%")
+        p1_lines.append("Total Holdings: 50000.00")
+
+        # Page 2: Continuation holdings
+        p2_lines = ["Holdings (Contd.)"]
+        for i in range(51, 101):
+            p2_lines.append(f"Security {i:03d} INE{i:09d} 100 10.00 1000.00 1.0%")
+        p2_lines.append("Subtotal Holdings: 50000.00")
+
+        # Page 3: Transactions and Portfolio Summary (on late pages)
+        p3_lines = [
+            "Transactions",
+            "Date Activity Security Qty Amount",
+        ]
+        for i in range(1, 51):
+            p3_lines.append(f"01/{i:02d}/2026 BUY Security {i:03d} 10 100.00")
+        p3_lines.extend([
+            "Portfolio Summary",
+            "Opening Value: 400000.00",
+            "Closing Value: 500000.00",
+            "Closing Cash: 25000.00",
+        ])
+
+        page1 = PageIR(page_number=1, width=595.0, height=842.0, raw_text="\n".join(p1_lines))
+        page2 = PageIR(page_number=2, width=595.0, height=842.0, raw_text="\n".join(p2_lines))
+        page3 = PageIR(page_number=3, width=595.0, height=842.0, raw_text="\n".join(p3_lines))
+        doc = DocumentIR(pages=[page1, page2, page3], page_count=3)
+
+        redacted_text, tables = build_bounded_doc_context(doc, Redactor(), max_total_chars=8000)
+
+        # Context must condense long data sections with omission markers and stay bounded
+        raw_len = len(doc.get_all_text())
+        bounded_text = build_bounded_doc_text(doc, max_total_chars=8000)
+        assert len(bounded_text) < raw_len
+        assert len(bounded_text) <= 8000
+        assert "... [" in redacted_text
+        assert len(redacted_text) <= 8000
+
+        # Section headings from across the pages must be preserved
+        assert "Portfolio Holdings" in redacted_text
+        assert "Holdings (Contd.)" in redacted_text
+        assert "Transactions" in redacted_text
+        assert "Portfolio Summary" in redacted_text
+
+        # Representative rows must be present for both holdings and transactions
+        assert "Security 001" in redacted_text
+        assert "BUY Security 001" in redacted_text
+
+        # Summary fields from page 3 must not be lost by prefix truncation
+        assert "Closing Value" in redacted_text
+        assert "Closing Cash" in redacted_text
+
+        # Redaction safeguard must be applied
+        assert "ABCDE1234F" not in redacted_text
+        assert "[REDACTED_PAN]" in redacted_text
+
+    def test_repair_prompt_uses_bounded_context(self):
+        from src.learner.prompts import build_repair_prompt
+        from src.redactor import Redactor
+
+        p1_lines = ["Portfolio Holdings", "Security Name ISIN Quantity Price Market Value Weight"]
+        for i in range(1, 40):
+            p1_lines.append(f"Holding {i} INE0000000{i} 10 100 1000 2.5%")
+        p2_lines = ["Transactions", "Date Activity Security Qty Amount"]
+        for i in range(1, 40):
+            p2_lines.append(f"01/01/2026 BUY Holding {i} 10 1000")
+
+        doc = DocumentIR(
+            pages=[
+                PageIR(page_number=1, width=595.0, height=842.0, raw_text="\n".join(p1_lines)),
+                PageIR(page_number=2, width=595.0, height=842.0, raw_text="\n".join(p2_lines)),
+            ],
+            page_count=2,
+        )
+
+        _, user_prompt = build_repair_prompt(
+            doc=doc,
+            format_id="test_format",
+            previous_spec_json="{}",
+            errors=["Error 1"],
+            warnings=[],
+            redactor=Redactor(),
+            repair_attempt=1,
+        )
+
+        assert "Portfolio Holdings" in user_prompt
+        assert "Transactions" in user_prompt
+        assert "... [" in user_prompt  # Omission indicator from condensation
+
+    def test_configurable_max_tokens_on_request(self):
+        from unittest.mock import MagicMock, patch
+        from src.learner.learner import Learner
+        from src.learner.models import LearnerConfig
+        from src.llm_adapter.models import LLMResponse
+
+        cfg = LearnerConfig(max_tokens=1500)
+        assert cfg.max_tokens == 1500
+
+        mock_llm = MagicMock()
+        mock_response = LLMResponse(
+            content='{"format_id": "test_tok", "statement_type": "PMS", "metadata_fields": {}, "summary_fields": {}}',
+            structured=None,
+            model="mock-model",
+        )
+        mock_llm.complete_request.return_value = mock_response
+
+        store = MagicMock()
+        store.draft_prefix = "draft_"
+        store.get.side_effect = Exception("not found")
+
+        doc = DocumentIR(pages=[PageIR(page_number=1, width=595.0, height=842.0, raw_text="Sample")])
+        learner = Learner(llm_adapter=mock_llm, spec_store=store, config=cfg)
+
+        with patch("src.learner.learner.extract_fingerprint") as mock_fp:
+            from src.fingerprint.models import FormatFingerprint
+            mock_fp.return_value = FormatFingerprint(format_id="test_tok", anchor_phrases=["sample"])
+            learner.learn(doc=doc, format_id="test_tok")
+
+        call_args = mock_llm.complete_request.call_args[0][0]
+        assert call_args.max_tokens == 1500
+
+    def test_many_pages_exceeding_total_budget(self):
+        from src.learner.prompts import build_bounded_doc_text
+
+        pages = []
+        for i in range(1, 51):
+            text = (
+                f"Page {i} Header\n"
+                f"Portfolio Holdings Section {i}\n"
+                f"Security A{i} INE{i:09d} 100 10.00 1000.00\n"
+                f"Security B{i} INE{i:09d} 200 20.00 4000.00\n"
+                f"Total Section {i}: 5000.00\n"
+            )
+            pages.append(PageIR(page_number=i, width=595.0, height=842.0, raw_text=text))
+        doc = DocumentIR(pages=pages, page_count=50)
+
+        budget = 1200
+        result = build_bounded_doc_text(doc, max_total_chars=budget)
+
+        assert len(result) <= budget
+        assert len(result) > 0
+        # Preserves headings from early and late pages
+        assert "Portfolio Holdings Section 1" in result
+        assert "Portfolio Holdings Section 50" in result
+
+    def test_single_page_containing_many_structural_lines(self):
+        from src.learner.prompts import build_bounded_doc_text
+
+        # Single page with 80 structural lines
+        lines = ["Portfolio Statement Overview"]
+        for i in range(1, 81):
+            lines.append(f"Summary Field {i:02d}: Value {i * 1000}.00")
+        lines.append("Total Portfolio Value: 999999.00")
+
+        doc = DocumentIR(
+            pages=[PageIR(page_number=1, width=595.0, height=842.0, raw_text="\n".join(lines))],
+            page_count=1,
+        )
+
+        budget = 500
+        result = build_bounded_doc_text(doc, max_total_chars=budget)
+
+        assert len(result) <= budget
+        assert len(result) > 0
+        assert "Portfolio Statement Overview" in result
+
+    def test_preserving_useful_content_from_later_pages_where_budget_allows(self):
+        from src.learner.prompts import build_bounded_doc_text
+
+        p1 = "Portfolio Management Statement\nPortfolio Holdings\nSecurity X INE000000001 100 10 1000\n"
+        p2 = "Continuation Page 2\nHoldings Data Mid 1\n"
+        p3 = "Continuation Page 3\nHoldings Data Mid 2\n"
+        p4 = "Transactions\n01/01/2026 BUY SecX 100 1000\nPortfolio Summary\nClosing Value: 1234567.89\n"
+
+        doc = DocumentIR(
+            pages=[
+                PageIR(page_number=1, width=595.0, height=842.0, raw_text=p1),
+                PageIR(page_number=2, width=595.0, height=842.0, raw_text=p2),
+                PageIR(page_number=3, width=595.0, height=842.0, raw_text=p3),
+                PageIR(page_number=4, width=595.0, height=842.0, raw_text=p4),
+            ],
+            page_count=4,
+        )
+
+        budget = 1500
+        result = build_bounded_doc_text(doc, max_total_chars=budget)
+
+        assert len(result) <= budget
+        # Early page content
+        assert "Portfolio Holdings" in result
+        # Later page content
+        assert "Transactions" in result
+        assert "Closing Value: 1234567.89" in result
+
+    def test_output_length_always_bounded_across_various_budgets(self):
+        from src.learner.prompts import build_bounded_doc_text
+
+        pages = [
+            PageIR(
+                page_number=i,
+                width=595.0,
+                height=842.0,
+                raw_text=f"Page {i} Title\nSection {i}\n" + "\n".join(f"Row {j} data {j*10}" for j in range(30)),
+            )
+            for i in range(1, 10)
+        ]
+        doc = DocumentIR(pages=pages, page_count=9)
+
+        test_budgets = [0, 5, 25, 50, 100, 250, 500, 1000, 3000, 10000]
+        for b in test_budgets:
+            result = build_bounded_doc_text(doc, max_total_chars=b)
+            assert len(result) <= b, f"Failed for budget {b}: got length {len(result)}"
+            if b == 0:
+                assert result == ""
+            else:
+                assert len(result) > 0

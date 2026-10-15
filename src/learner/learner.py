@@ -24,6 +24,7 @@ from src.ir.models import DocumentIR
 from src.llm_adapter.adapter import LLMAdapter, _extract_json_payload
 from src.llm_adapter.exceptions import LLMAdapterError, LLMResponseValidationError
 from src.llm_adapter.models import LLMRequest
+from src.learner.prompts import _has_usable_tables
 from src.models.enums import DocumentStatus, StatementType
 from src.models.models import ParseResult
 from src.redactor.redactor import Redactor
@@ -266,6 +267,7 @@ class Learner:
                 prompt=user_prompt,
                 system_prompt=sys_prompt,
                 temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
                 model=self.config.model,
                 metadata={"format_id": prompt_fid, "attempt": attempt_idx},
             )
@@ -340,6 +342,23 @@ class Learner:
             # 4. Test candidate spec against source document with ParsingEngine
             parse_result = self.engine.parse(doc, candidate_spec)
             last_parse_result = parse_result
+
+            # 4a. Reject completely empty / unusable specs before running validator
+            empty_errors = self._check_spec_is_usable(doc, candidate_spec, parse_result)
+            if empty_errors:
+                last_errors = empty_errors
+                attempts.append(
+                    LearningAttempt(
+                        attempt_number=attempt_idx,
+                        raw_response=raw_dict or response.content,
+                        spec=candidate_spec,
+                        parse_result=parse_result,
+                        validation_result=None,
+                        errors=empty_errors,
+                        success=False,
+                    )
+                )
+                continue
 
             # 5. Run Validator checks
             val_result = self.validator.validate(parse_result)
@@ -562,5 +581,81 @@ class Learner:
             if "not found in document" in warn.lower() or "could not be located" in warn.lower():
                 if not any(warn in e for e in errors):
                     errors.append(warn)
+
+        # 5. Text-section holdings: if declared, verify that rows were extracted
+        if spec.text_holdings is not None and not parse_result.holdings:
+            desc = (
+                f"anchor '{spec.text_holdings.anchor}'"
+                if spec.text_holdings.anchor
+                else "text_section locator"
+            )
+            errors.append(
+                f"Proposed text_holdings locator ({desc}) failed to extract any holdings rows."
+            )
+
+        # 6. Text-section transactions: if declared, verify that rows were extracted
+        if spec.text_transactions is not None and not parse_result.transactions:
+            desc = (
+                f"anchor '{spec.text_transactions.anchor}'"
+                if spec.text_transactions.anchor
+                else "text_section locator"
+            )
+            errors.append(
+                f"Proposed text_transactions locator ({desc}) failed to extract any transaction rows."
+            )
+
+        return errors
+
+    def _check_spec_is_usable(
+        self,
+        doc: DocumentIR,
+        spec: ParsingSpec,
+        parse_result: ParseResult,
+    ) -> list[str]:
+        """Detect completely empty or unusable candidate specs.
+
+        A spec is considered unusable if ALL of the following are true:
+        - No metadata fields were declared.
+        - No summary fields were declared.
+        - No holdings were extracted (and no holdings locator is declared).
+        - No transactions were extracted (and no transactions locator is declared).
+
+        When the document actually contains text (i.e. is not a blank page), an
+        empty spec is always a generation error and must be repaired.
+        """
+        errors: list[str] = []
+        doc_text = doc.get_all_text().strip()
+        if not doc_text:
+            # Nothing in the document — cannot validate content presence
+            return errors
+
+        has_metadata = bool(spec.metadata_fields)
+        has_summary = bool(spec.summary_fields)
+        has_holdings_decl = (
+            spec.holdings_table is not None or spec.text_holdings is not None
+        )
+        has_transactions_decl = (
+            spec.transactions_table is not None or spec.text_transactions is not None
+        )
+
+        if not has_metadata and not has_summary and not has_holdings_decl and not has_transactions_decl:
+            errors.append(
+                "The proposed spec is completely empty: no metadata_fields, summary_fields, "
+                "holdings locator, or transactions locator were declared. "
+                "The document contains extractable data — the spec must be populated."
+            )
+            return errors
+
+        if not has_metadata:
+            errors.append(
+                "The proposed spec declares no metadata_fields. At least provider_name or "
+                "client_identifier must be declared when the document contains header metadata."
+            )
+
+        if not has_summary:
+            errors.append(
+                "The proposed spec declares no summary_fields. At least one summary value "
+                "(e.g. closing_value, units) must be declared when the document contains financial totals."
+            )
 
         return errors

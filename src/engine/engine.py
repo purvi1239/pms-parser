@@ -6,6 +6,10 @@ from typing import Any
 from src.engine.converters import clean_text, to_decimal
 from src.engine.locators import extract_field_value
 from src.engine.table_parser import parse_holdings_table, parse_transactions_table
+from src.engine.text_section_parser import (
+    parse_text_section_holdings,
+    parse_text_section_transactions,
+)
 from src.ir.models import DocumentIR
 from src.models.enums import DocumentStatus
 from src.models.models import ParseResult, Statement, Summary
@@ -89,10 +93,40 @@ class ParsingEngine:
             warnings.extend(h_warns)
             holdings = h_list
 
+        # Fallback: text-section extraction when no table rows found
+        if not holdings and spec.text_holdings is not None:
+            tsl = spec.text_holdings
+            h_list, h_warns = parse_text_section_holdings(
+                doc,
+                anchor=tsl.anchor,
+                stop_anchor=tsl.stop_anchor,
+                row_pattern=tsl.row_pattern,
+                column_mapping=tsl.column_mapping,
+                start_page=tsl.page_number,
+                skip_patterns=tsl.skip_patterns,
+            )
+            warnings.extend(h_warns)
+            holdings = h_list
+
         # ── 4. Transactions Table Extraction ─────────────────────────────────
         transactions = []
         if spec.transactions_table is not None:
             t_list, t_warns = parse_transactions_table(doc, spec.transactions_table)
+            warnings.extend(t_warns)
+            transactions = t_list
+
+        # Fallback: text-section extraction when no table rows found
+        if not transactions and spec.text_transactions is not None:
+            tsl = spec.text_transactions
+            t_list, t_warns = parse_text_section_transactions(
+                doc,
+                anchor=tsl.anchor,
+                stop_anchor=tsl.stop_anchor,
+                row_pattern=tsl.row_pattern,
+                column_mapping=tsl.column_mapping,
+                start_page=tsl.page_number,
+                skip_patterns=tsl.skip_patterns,
+            )
             warnings.extend(t_warns)
             transactions = t_list
 

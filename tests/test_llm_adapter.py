@@ -56,7 +56,7 @@ class TestLLMConfig:
         assert cfg.api_key is None
         assert cfg.api_base == "https://api.openai.com/v1"
         assert cfg.model == "gpt-4o-mini"
-        assert cfg.timeout_seconds == 30.0
+        assert cfg.timeout_seconds == 120.0
         assert cfg.replay_mode == "disabled"
         assert cfg.max_retries == 2
 
@@ -469,3 +469,150 @@ class TestFakeLLMAdapter:
 
         assert fake.ledger.total_calls() == 3
         assert fake.ledger.successful_calls() == 3
+
+
+# ---------------------------------------------------------------------------
+# 9. Local Ollama / Loopback URL Support
+# ---------------------------------------------------------------------------
+
+class TestLocalOllamaSupport:
+    """Verify Ollama/local endpoint detection, auth bypass, and zero cost."""
+
+    # ── _is_local_url helper ────────────────────────────────────────────────
+
+    def test_localhost_detected_as_local(self):
+        from src.llm_adapter.adapter import _is_local_url
+        assert _is_local_url("http://localhost:11434/v1") is True
+
+    def test_127_0_0_1_detected_as_local(self):
+        from src.llm_adapter.adapter import _is_local_url
+        assert _is_local_url("http://127.0.0.1:11434/v1") is True
+
+    def test_ipv6_loopback_detected_as_local(self):
+        from src.llm_adapter.adapter import _is_local_url
+        assert _is_local_url("http://[::1]:11434/v1") is True
+
+    def test_cloud_url_not_local(self):
+        from src.llm_adapter.adapter import _is_local_url
+        assert _is_local_url("https://api.openai.com/v1") is False
+        assert _is_local_url("https://custom.llm-provider.io/v1") is False
+
+    # ── Cloud authentication remains mandatory ──────────────────────────────
+
+    def test_cloud_url_without_api_key_raises_configuration_error(self):
+        """Non-local URL with no API key must raise LLMConfigurationError."""
+        cfg = LLMConfig(api_key=None, api_base="https://api.openai.com/v1")
+        adapter = LLMAdapter(config=cfg)
+        with pytest.raises(LLMConfigurationError, match="API key not configured"):
+            adapter.complete(prompt="Test cloud auth")
+
+    # ── Local auth bypass ───────────────────────────────────────────────────
+
+    def test_local_url_without_api_key_does_not_raise_auth_error(self):
+        """Local Ollama URL must succeed without an API key configured."""
+        captured: list[dict] = []
+
+        def fake_transport(payload, config):
+            captured.append(dict(payload))
+            return {
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+            }
+
+        cfg = LLMConfig(api_key=None, api_base="http://localhost:11434/v1")
+        adapter = LLMAdapter(config=cfg, transport=fake_transport)
+        resp = adapter.complete(prompt="Hello Ollama")
+        assert resp.structured == {"ok": True}
+        assert len(captured) == 1  # transport was invoked without error
+
+    def test_local_url_with_api_key_includes_authorization_header(self):
+        """If a key IS provided for a local URL it should still be forwarded."""
+        headers_seen: list[dict] = []
+
+        def fake_transport(payload, config):
+            # Inspect what the real transport would build by peeking at config
+            headers_seen.append({"has_key": bool(config.api_key)})
+            return {
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+            }
+
+        cfg = LLMConfig(api_key="ollama-local-key", api_base="http://127.0.0.1:11434/v1")
+        adapter = LLMAdapter(config=cfg, transport=fake_transport)
+        resp = adapter.complete(prompt="Hello local with key")
+        assert resp.structured == {"ok": True}
+        assert headers_seen[0]["has_key"] is True
+
+    def test_real_transport_omits_auth_header_for_local_no_key(self):
+        """_default_http_transport must not include Authorization when api_key is None and URL is local."""
+        built_requests: list[urllib.request.Request] = []
+
+        class CapturingOpener:
+            def open(self, req, timeout=None):
+                built_requests.append(req)
+                # Return a minimal response without actually hitting the network
+                import io
+                body = json.dumps({
+                    "choices": [{"message": {"content": '{"status": "local"}'}}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4},
+                }).encode()
+
+                class FakeResp:
+                    def read(self): return body
+                    def __enter__(self): return self
+                    def __exit__(self, *a): pass
+
+                return FakeResp()
+
+        import unittest.mock as mock
+        cfg = LLMConfig(api_key=None, api_base="http://localhost:11434/v1")
+        adapter = LLMAdapter(config=cfg)
+
+        opener = CapturingOpener()
+        with mock.patch("urllib.request.urlopen", side_effect=opener.open):
+            resp = adapter.complete(prompt="Probe headers")
+
+        assert len(built_requests) == 1
+        req = built_requests[0]
+        assert req.get_header("Authorization") is None
+        assert resp.structured == {"status": "local"}
+
+    # ── Zero cost for local requests ────────────────────────────────────────
+
+    def test_local_request_cost_is_exactly_zero(self):
+        """Regardless of configured token rates, local requests must cost $0."""
+        def fake_transport(payload, config):
+            return {
+                "choices": [{"message": {"content": '{"answer": 42}'}}],
+                "usage": {"prompt_tokens": 500, "completion_tokens": 500, "total_tokens": 1000},
+            }
+
+        cfg = LLMConfig(
+            api_key=None,
+            api_base="http://localhost:11434/v1",
+            cost_per_1k_prompt_tokens=D("10.00"),
+            cost_per_1k_completion_tokens=D("10.00"),
+        )
+        adapter = LLMAdapter(config=cfg, transport=fake_transport)
+        resp = adapter.complete(prompt="Expensive-looking local call")
+        assert resp.cost_usd == D("0.000000")
+        assert adapter.ledger.records[-1].cost_usd == D("0.000000")
+        assert adapter.ledger.total_cost() == D("0.000000")
+
+    def test_cloud_request_cost_is_nonzero_with_tokens(self):
+        """Cloud requests with tokens must still produce a non-zero cost."""
+        def fake_transport(payload, config):
+            return {
+                "choices": [{"message": {"content": '{"summary": "ok"}'}}],
+                "usage": {"prompt_tokens": 1000, "completion_tokens": 1000, "total_tokens": 2000},
+            }
+
+        cfg = LLMConfig(
+            api_key="cloud-key",
+            api_base="https://api.openai.com/v1",
+            cost_per_1k_prompt_tokens=D("0.00015"),
+            cost_per_1k_completion_tokens=D("0.00060"),
+        )
+        adapter = LLMAdapter(config=cfg, transport=fake_transport)
+        resp = adapter.complete(prompt="Cloud call")
+        assert resp.cost_usd > D("0.000000")

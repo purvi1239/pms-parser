@@ -14,6 +14,7 @@ import re
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -36,6 +37,23 @@ from src.llm_adapter.ledger import LLMLedger
 from src.llm_adapter.models import LLMCallRecord, LLMConfig, LLMRequest, LLMResponse
 
 _Q6 = Decimal("0.000001")
+_ZERO_COST = Decimal("0.000000")
+
+_LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _is_local_url(api_base: str) -> bool:
+    """Return True when api_base resolves to a loopback address.
+
+    Uses urllib.parse for reliable host extraction rather than string matching.
+    Handles IPv4 (127.0.0.1), IPv6 (::1, [::1]), and the 'localhost' hostname.
+    """
+    try:
+        parsed = urllib.parse.urlparse(api_base)
+        host = (parsed.hostname or "").lower().strip("[]")
+        return host in _LOCAL_HOSTNAMES
+    except Exception:
+        return False
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, Any]:
@@ -190,7 +208,10 @@ class LLMAdapter:
             completion_tokens = usage.get("completion_tokens", 0)
             total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
 
-            cost = self._calculate_cost(prompt_tokens, completion_tokens)
+            if _is_local_url(self.config.api_base):
+                cost = _ZERO_COST
+            else:
+                cost = self._calculate_cost(prompt_tokens, completion_tokens)
 
             # Parse and validate structured output if expected
             structured: dict[str, Any] | None = None
@@ -366,8 +387,15 @@ class LLMAdapter:
     def _default_http_transport(
         self, payload: dict[str, Any], config: LLMConfig
     ) -> dict[str, Any]:
-        """Execute HTTP POST using Python standard library urllib."""
-        if not config.api_key:
+        """Execute HTTP POST using Python standard library urllib.
+
+        For local Ollama endpoints (localhost / 127.0.0.1 / ::1) the
+        Authorization header is omitted entirely when no API key is set.
+        A real API key is still required for every non-local API base URL.
+        """
+        local = _is_local_url(config.api_base)
+
+        if not local and not config.api_key:
             raise LLMConfigurationError(
                 "LLM API key not configured. Set the LLM_API_KEY environment variable."
             )
@@ -375,13 +403,14 @@ class LLMAdapter:
         url = f"{config.api_base.rstrip('/')}/chat/completions"
         data_bytes = json.dumps(payload).encode("utf-8")
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+
         req = urllib.request.Request(
             url,
             data=data_bytes,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.api_key}",
-            },
+            headers=headers,
             method="POST",
         )
 

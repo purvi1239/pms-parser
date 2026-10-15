@@ -20,7 +20,7 @@ class LLMConfig(BaseModel):
     api_key: str | None = None
     api_base: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 120.0
     max_retries: int = 2
     cost_per_1k_prompt_tokens: Decimal = Decimal("0.00015")
     cost_per_1k_completion_tokens: Decimal = Decimal("0.00060")
@@ -42,7 +42,7 @@ class LLMConfig(BaseModel):
         - LLM_LEDGER_PATH: Path to append JSONL call records
         """
         raw_timeout = os.getenv("LLM_TIMEOUT")
-        timeout_val = float(raw_timeout) if raw_timeout else 30.0
+        timeout_val = float(raw_timeout) if raw_timeout else 120.0
 
         return cls(
             api_key=os.getenv("LLM_API_KEY"),

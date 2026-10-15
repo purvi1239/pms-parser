@@ -78,6 +78,9 @@ class LearnerConfig(BaseModel):
     temperature: float = 0.0
     """Deterministic LLM sampling temperature."""
 
+    max_tokens: int = 2048
+    """Maximum completion tokens for the LLM request to avoid timeouts."""
+
     model: str | None = None
     """LLM model override (defaults to adapter config)."""
 
