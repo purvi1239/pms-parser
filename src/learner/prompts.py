@@ -35,6 +35,7 @@ Locators must prefer anchor-relative strategies over fixed coordinates:
 CRITICAL RULES — you MUST follow every rule or the spec is rejected:
 - NEVER return an empty spec (empty metadata_fields, empty summary_fields, null holdings, null transactions)
   when the document contains clearly extractable data.
+- 'metadata_fields' and 'summary_fields' MUST be JSON objects / dictionaries mapping field name keys to FieldLocator objects (e.g. {"field_name": {"locator_type": ...}}). NEVER return them as arrays or lists of locators ([{...}] is INVALID).
 - If the document has tables with holdings or transactions, use 'table_after_anchor'.
 - If the document has NO usable PDF tables for holdings/transactions but the data appears as
   structured text lines, populate 'text_holdings' and/or 'text_transactions' with a 'text_section' locator.
@@ -590,13 +591,15 @@ Generate a deterministic ParsingSpec JSON object for this document format.
 Required top-level fields:
 - 'format_id': "{format_id}"
 - 'statement_type': "{statement_type.value}"
-- 'metadata_fields': map at least the fields present in the document from:
+- 'metadata_fields': JSON dictionary/object mapping field name strings to FieldLocator objects (NEVER an array/list of locators).
+  Map at least the fields present in the document from:
     provider_name, strategy_name, client_identifier, statement_period, currency
-  Each value is a FieldLocator object (locator_type, anchor, pattern, etc.).
-- 'summary_fields': map at least the summary fields visible in the document from:
+  Each key is the field name string; each value is a FieldLocator object: {{"locator_type": ..., "anchor": ...}}.
+- 'summary_fields': JSON dictionary/object mapping summary field name strings to FieldLocator objects (NEVER an array/list of locators).
+  Map at least the summary fields visible in the document from:
     opening_value, closing_value, opening_cash, closing_cash, fees_charged,
     income, units, nav_per_unit
-  Each value is a FieldLocator object.
+  Each key is the summary field name string; each value is a FieldLocator object.
 - If the document has portfolio holdings data:
   - With PDF tables: use 'holdings_table' (TableLocator, locator_type='table_after_anchor').
   - Without PDF tables: use 'text_holdings' (TextSectionLocator, locator_type='text_section').
@@ -604,7 +607,54 @@ Required top-level fields:
   - With PDF tables: use 'transactions_table' (TableLocator, locator_type='table_after_anchor').
   - Without PDF tables: use 'text_transactions' (TextSectionLocator, locator_type='text_section').
 
-TextSectionLocator format:
+CRITICAL SCHEMA REQUIREMENT:
+'metadata_fields' and 'summary_fields' MUST be JSON objects / dictionaries, NEVER arrays or lists.
+CORRECT:
+  "metadata_fields": {{
+    "provider_name": {{"locator_type": "value_right_of_anchor", "anchor": "Portfolio Manager:"}},
+    "client_identifier": {{"locator_type": "value_right_of_anchor", "anchor": "Client Code:"}}
+  }}
+INCORRECT:
+  "metadata_fields": [{{"locator_type": "value_right_of_anchor", "anchor": "..."}}]
+
+ILLUSTRATIVE PARSINGSPEC SCHEMA EXAMPLE:
+{{
+  "format_id": "{format_id}",
+  "statement_type": "{statement_type.value}",
+  "metadata_fields": {{
+    "provider_name": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Portfolio Manager:"
+    }},
+    "client_identifier": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Client Code:"
+    }}
+  }},
+  "summary_fields": {{
+    "closing_value": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Portfolio Value:"
+    }},
+    "closing_cash": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Cash Balance:"
+    }}
+  }},
+  "holdings_table": {{
+    "locator_type": "table_after_anchor",
+    "anchor": "Portfolio Holdings",
+    "header_keywords": ["Security", "ISIN", "Quantity", "Market Value"],
+    "column_mapping": {{
+      "security_name": "Security",
+      "isin": "ISIN",
+      "quantity": "Quantity",
+      "market_value": "Market Value"
+    }}
+  }}
+}}
+
+TextSectionLocator format (use in 'text_holdings' or 'text_transactions' when no PDF tables exist):
 {{
   "locator_type": "text_section",
   "anchor": "<section heading phrase from the document>",
@@ -671,6 +721,58 @@ Repair Instructions:
    line format shown in the document text.
 5. Ensure 'column_mapping' maps every needed model field to a named group in 'row_pattern'.
 6. Never return metadata_fields or summary_fields as empty when the document has extractable data.
+7. CRITICAL SCHEMA REQUIREMENT: 'metadata_fields' and 'summary_fields' MUST be JSON objects / dictionaries (key-value maps where each key is a field name and each value is a FieldLocator), NEVER arrays or lists.
+   If the validation error says "Input should be a valid dictionary" or "input_type=list", you returned a list `[{{...}}]`; you MUST change it to a dictionary `{{"field_name": {{"locator_type": "...", ...}}}}`.
+
+ILLUSTRATIVE PARSINGSPEC SCHEMA EXAMPLE:
+{{
+  "format_id": "{format_id}",
+  "statement_type": "PMS",
+  "metadata_fields": {{
+    "provider_name": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Portfolio Manager:"
+    }},
+    "client_identifier": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Client Code:"
+    }}
+  }},
+  "summary_fields": {{
+    "closing_value": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Portfolio Value:"
+    }},
+    "closing_cash": {{
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Cash Balance:"
+    }}
+  }},
+  "holdings_table": {{
+    "locator_type": "table_after_anchor",
+    "anchor": "Portfolio Holdings",
+    "header_keywords": ["Security", "ISIN", "Quantity", "Market Value"],
+    "column_mapping": {{
+      "security_name": "Security",
+      "isin": "ISIN",
+      "quantity": "Quantity",
+      "market_value": "Market Value"
+    }}
+  }}
+}}
+
+TextSectionLocator format (use in 'text_holdings' or 'text_transactions' when no PDF tables exist):
+{{
+  "locator_type": "text_section",
+  "anchor": "<section heading phrase from the document>",
+  "stop_anchor": "<next section heading or end marker>",
+  "row_pattern": "<Python regex with named groups, e.g. (?P<date>\\\\d{{2}}/\\\\d{{2}}/\\\\d{{4}})\\\\s+(?P<particulars>.+?)\\\\s+(?P<units>[\\\\d,\\\\.]+)>",
+  "column_mapping": {{
+    "<model_field>": "<named_group_in_row_pattern>",
+    ...
+  }},
+  "skip_patterns": ["<regex matching total/header lines to exclude>"]
+}}
 
 Return only the repaired ParsingSpec JSON object:
 """
