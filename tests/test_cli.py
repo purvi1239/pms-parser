@@ -90,7 +90,7 @@ class TestCliHelpAndArgumentValidation:
 
         assert code == 2
         err_text = err.getvalue()
-        assert "Error: Please provide a PDF file path or --folder directory path." in err_text
+        assert "Error: Please provide a PDF file path, --folder directory path, or --gmail option." in err_text
 
     def test_both_positional_and_folder_conflicts(self):
         """Specifying both a positional path and --folder returns exit code 2."""
