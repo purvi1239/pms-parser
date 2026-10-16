@@ -10,13 +10,16 @@ A deterministic, multi-format financial statement ingestion, parsing, and valida
 - **Environment**: Virtual environment with dependencies installed.
 
 ```bash
-# Activate your existing virtual environment:
+# Activate your virtual environment:
 source .venv/bin/activate
 
 # Or create a new environment:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Generate the synthetic statement test suite:
+python -m src.sample_generator
 ```
 
 ---

@@ -2,10 +2,19 @@
 .env
 __pycache__/
 *.db
+*.sqlite
+*.sqlite3
 samples/real/
 samples/synthetic/
-
 
 # Local and private files
 .DS_Store
 samples/external/
+
+# Generated draft specs & audit files
+specs/draft_*.json
+
+# Pytest and coverage
+.pytest_cache/
+.coverage
+htmlcov/

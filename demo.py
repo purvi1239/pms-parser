@@ -213,9 +213,10 @@ def run_demo(verbose: bool = False) -> int:
     project_root = Path(__file__).resolve().parent
     samples_dir = project_root / "samples" / "synthetic"
 
-    if not samples_dir.is_dir():
-        print(f"Error: Synthetic samples directory not found at {samples_dir}", file=sys.stderr)
-        return 1
+    if not samples_dir.is_dir() or not (samples_dir / "format_a1.pdf").is_file():
+        print(f"  Notice: Synthetic samples not found at {samples_dir}. Generating fixtures...", flush=True)
+        from src.sample_generator.generator import generate_all
+        generate_all(samples_dir)
 
     _banner("PMS & AIF STATEMENT PARSER — STAGE 1 SYNTHETIC DEMO")
     print("  Repository root :", project_root)

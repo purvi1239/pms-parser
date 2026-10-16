@@ -12,22 +12,6 @@ from typing import Any, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class LLMConfig(BaseModel):
-    """Configuration for LLM API connection, tolerances, and replay mode."""
-
-    model_config = ConfigDict(validate_assignment=True)
-
-    api_key: str | None = None
-    api_base: str = "https://api.openai.com/v1"
-    model: str = "gpt-4o-mini"
-    timeout_seconds: float = 120.0
-    max_retries: int = 2
-    cost_per_1k_prompt_tokens: Decimal = Decimal("0.00015")
-    cost_per_1k_completion_tokens: Decimal = Decimal("0.00060")
-    replay_mode: str = "disabled"  # "disabled", "record", "replay"
-    replay_dir: Union[str, Path, None] = None
-    ledger_path: Union[str, Path, None] = None
-
 _LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 
@@ -44,6 +28,22 @@ def _is_local_url(api_base: str) -> bool:
     except Exception:
         return False
 
+
+class LLMConfig(BaseModel):
+    """Configuration for LLM API connection, tolerances, and replay mode."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    api_key: str | None = None
+    api_base: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    timeout_seconds: float = 120.0
+    max_retries: int = 2
+    cost_per_1k_prompt_tokens: Decimal = Decimal("0.00015")
+    cost_per_1k_completion_tokens: Decimal = Decimal("0.00060")
+    replay_mode: str = "disabled"  # "disabled", "record", "replay"
+    replay_dir: Union[str, Path, None] = None
+    ledger_path: Union[str, Path, None] = None
 
     @classmethod
     def from_env(cls) -> LLMConfig:
@@ -85,7 +85,11 @@ def _is_local_url(api_base: str) -> bool:
         return (
             f"LLMConfig(api_key={masked_key!r}, api_base={self.api_base!r}, "
             f"model={self.model!r}, timeout_seconds={self.timeout_seconds}, "
-            f"replay_mode={self.replay_mode!r})"
+            f"max_retries={self.max_retries}, "
+            f"cost_per_1k_prompt_tokens={self.cost_per_1k_prompt_tokens!r}, "
+            f"cost_per_1k_completion_tokens={self.cost_per_1k_completion_tokens!r}, "
+            f"replay_mode={self.replay_mode!r}, replay_dir={self.replay_dir!r}, "
+            f"ledger_path={self.ledger_path!r})"
         )
 
     def __str__(self) -> str:
