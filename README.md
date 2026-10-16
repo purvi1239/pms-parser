@@ -222,3 +222,11 @@ python -m src.cli --approve draft_synthetic-format-b
 3. **Spec Learning**: When `--learn` is enabled for unknown formats, the LLM learner produces *draft* specifications (`specs/draft_*.json`). Drafts remain inactive until explicitly inspected and activated via `python -m src.cli --approve <DRAFT_ID>`.
 4. **Seeding Required**: Approved parsing specifications for the synthetic formats (A, B, C) are not bundled with source control because they embed live fingerprints extracted from the synthetic PDFs. Run `scripts/bootstrap_specs.py` once after generating samples to seed `specs/` and enable persistent format recognition across CLI invocations.
 5. **JSON Export (Future Enhancement)**: Direct CLI export of parsed statements to standalone JSON files is out of scope for this release. Extracted statements and validation findings are stored in the SQLite database (`data/pms_parser.db`) and accessible via `StatementStore`.
+
+---
+
+## 7. Documentation
+
+- [Architecture & Design Overview](docs/DESIGN.md): Subsystem responsibilities, pipeline state machines, and data flow.
+- [AI Implementation & Engineering Log](docs/AI_LOG.md): Comprehensive chronological engineering log documenting all 17 build steps, design decisions, bug fixes, test counts, and system boundaries.
+- [Known Limitations & Scope](docs/LIMITATIONS.md): Operational constraints, input document boundaries, and format scope.
