@@ -1,0 +1,280 @@
+{
+  "format_id": "synthetic-format-a-messy",
+  "version": "1.0.0",
+  "statement_type": "PMS",
+  "description": "Format A messy: multi-page holdings, same anchors as Format A",
+  "fingerprint": {
+    "format_id": "synthetic-format-a-messy",
+    "anchor_phrases": [
+      "portfolio management statement",
+      "pinnacle wealth pms india growth strategy",
+      "client id",
+      "currency",
+      "inr statement type",
+      "pms",
+      "holdings",
+      "manufacturer",
+      "transactions",
+      "date type security qty amount inr",
+      "portfolio summary"
+    ],
+    "table_headers": [
+      [
+        "security name",
+        "isin",
+        "qty",
+        "cost inr",
+        "mkt value inr",
+        "weight %"
+      ],
+      [
+        "date",
+        "type",
+        "security",
+        "qty",
+        "amount inr"
+      ]
+    ],
+    "layout_stats": {
+      "page_count": 1,
+      "table_count": 2,
+      "column_counts": [
+        6,
+        5
+      ]
+    },
+    "metadata": {
+      "source_path": "samples/synthetic/format_a_messy.pdf",
+      "unique_anchor_count": 11
+    }
+  },
+  "metadata_fields": {
+    "provider_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "^(.+?)\\s+[\u2014\\-]{1,2}\\s+.+$",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "strategy_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "^.+?\\s+[\u2014\\-]{1,2}\\s+(.+)$",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "client_identifier": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Client ID:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "statement_period": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Statement Period:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "currency": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Currency:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    }
+  },
+  "summary_fields": {
+    "opening_value": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Opening Portfolio Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_value": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Portfolio Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "opening_cash": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Opening Cash Balance",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_cash": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Cash Balance",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "fees_charged": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Fees Charged",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "income": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Income",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "realized_gains": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Realised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "unrealized_gains": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Unrealised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    }
+  },
+  "holdings_table": {
+    "locator_type": "table_after_anchor",
+    "anchor": "Holdings",
+    "page_number": null,
+    "bbox": null,
+    "fallback_bbox": null,
+    "header_keywords": [
+      "Security Name",
+      "ISIN",
+      "Qty",
+      "Cost",
+      "Weight"
+    ],
+    "column_mapping": {
+      "security_name": "Security Name",
+      "isin": "ISIN",
+      "quantity": "Qty",
+      "cost": "Cost (INR)",
+      "market_value": "Mkt Value (INR)",
+      "weight": "Weight %"
+    },
+    "stop_anchor": null,
+    "multi_page": true,
+    "repeat_headers": false
+  },
+  "transactions_table": {
+    "locator_type": "table_after_anchor",
+    "anchor": "Transactions",
+    "page_number": null,
+    "bbox": null,
+    "fallback_bbox": null,
+    "header_keywords": [
+      "Date",
+      "Type",
+      "Security",
+      "Qty",
+      "Amount"
+    ],
+    "column_mapping": {
+      "date": "Date",
+      "type": "Type",
+      "security": "Security",
+      "quantity": "Qty",
+      "amount": "Amount (INR)"
+    },
+    "stop_anchor": null,
+    "multi_page": true,
+    "repeat_headers": false
+  },
+  "text_holdings": null,
+  "text_transactions": null,
+  "custom_tables": {},
+  "metadata": {
+    "is_active": true,
+    "status": "active"
+  }
+}

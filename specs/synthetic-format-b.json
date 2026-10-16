@@ -1,0 +1,291 @@
+{
+  "format_id": "synthetic-format-b",
+  "version": "1.0.0",
+  "statement_type": "PMS",
+  "description": "Format B: Client Portfolio Report with horizontal summary and Trade Ledger",
+  "fingerprint": {
+    "format_id": "synthetic-format-b",
+    "anchor_phrases": [
+      "client portfolio report",
+      "horizon capital management",
+      "diversified equity portfolio",
+      "account number",
+      "base currency",
+      "inr account type",
+      "pms",
+      "portfolio holdings",
+      "trade ledger",
+      "fund summary"
+    ],
+    "table_headers": [
+      [
+        "no",
+        "scrip name",
+        "isin code",
+        "units",
+        "purchase cost",
+        "current value",
+        "allocation %"
+      ],
+      [
+        "trade date",
+        "activity",
+        "instrument",
+        "units",
+        "consideration inr"
+      ],
+      [
+        "opening value",
+        "closing value",
+        "opening cash",
+        "closing cash",
+        "fees charged",
+        "income",
+        "realised gains",
+        "unrealised gains"
+      ]
+    ],
+    "layout_stats": {
+      "page_count": 1,
+      "table_count": 3,
+      "column_counts": [
+        7,
+        5,
+        8
+      ]
+    },
+    "metadata": {
+      "source_path": "samples/synthetic/format_b.pdf",
+      "unique_anchor_count": 10
+    }
+  },
+  "metadata_fields": {
+    "provider_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "Client Portfolio Report\\s*\\n([^\\n]+)",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "strategy_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "Client Portfolio Report\\s*\\n[^\\n]+\\n([^\\n]+)",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "client_identifier": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Account Number:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "statement_period": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Report Period:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "currency": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Base Currency:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    }
+  },
+  "summary_fields": {
+    "opening_value": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Opening Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_value": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Closing Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "opening_cash": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Opening Cash",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_cash": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Closing Cash",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "fees_charged": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Fees Charged",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "income": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Income",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "realized_gains": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Realised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "unrealized_gains": {
+      "locator_type": "value_below_anchor",
+      "anchor": "Unrealised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    }
+  },
+  "holdings_table": {
+    "locator_type": "table_after_anchor",
+    "anchor": "Portfolio Holdings",
+    "page_number": null,
+    "bbox": null,
+    "fallback_bbox": null,
+    "header_keywords": [
+      "Scrip Name",
+      "ISIN Code",
+      "Units",
+      "Purchase Cost",
+      "Current Value"
+    ],
+    "column_mapping": {
+      "security_name": "Scrip Name",
+      "isin": "ISIN Code",
+      "quantity": "Units",
+      "cost": "Purchase Cost",
+      "market_value": "Current Value",
+      "weight": "Allocation %"
+    },
+    "stop_anchor": null,
+    "multi_page": true,
+    "repeat_headers": false
+  },
+  "transactions_table": {
+    "locator_type": "table_after_anchor",
+    "anchor": "Trade Ledger",
+    "page_number": null,
+    "bbox": null,
+    "fallback_bbox": null,
+    "header_keywords": [
+      "Trade Date",
+      "Activity",
+      "Instrument",
+      "Units",
+      "Consideration"
+    ],
+    "column_mapping": {
+      "date": "Trade Date",
+      "type": "Activity",
+      "security": "Instrument",
+      "quantity": "Units",
+      "amount": "Consideration (INR)"
+    },
+    "stop_anchor": null,
+    "multi_page": true,
+    "repeat_headers": false
+  },
+  "text_holdings": null,
+  "text_transactions": null,
+  "custom_tables": {},
+  "metadata": {
+    "is_active": true,
+    "status": "active"
+  }
+}

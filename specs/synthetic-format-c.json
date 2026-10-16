@@ -1,0 +1,266 @@
+{
+  "format_id": "synthetic-format-c",
+  "version": "1.0.0",
+  "statement_type": "AIF",
+  "description": "Format C: AIF Investor Statement with Fund Overview and Cash Ledger",
+  "fingerprint": {
+    "format_id": "synthetic-format-c",
+    "anchor_phrases": [
+      "alternative investment fund investor statement",
+      "nexus ventures aif",
+      "investor id",
+      "base currency",
+      "inr fund category",
+      "category ii aif",
+      "fund overview",
+      "cash ledger",
+      "date activity amount inr",
+      "fund performance summary"
+    ],
+    "table_headers": [
+      [
+        "date",
+        "activity",
+        "amount inr"
+      ]
+    ],
+    "layout_stats": {
+      "page_count": 1,
+      "table_count": 1,
+      "column_counts": [
+        3
+      ]
+    },
+    "metadata": {
+      "source_path": "samples/synthetic/format_c.pdf",
+      "unique_anchor_count": 10
+    }
+  },
+  "metadata_fields": {
+    "provider_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "Alternative Investment Fund[^\\n]*\\n([^\\n]+)",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "strategy_name": {
+      "locator_type": "value_matching_pattern",
+      "anchor": null,
+      "pattern": "Alternative Investment Fund[^\\n]*\\n[^\\n]+\\n([^\\n]+)",
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "client_identifier": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Investor ID:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "statement_period": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Commitment Period:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "currency": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Base Currency:",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    }
+  },
+  "summary_fields": {
+    "units": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Units Held",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "nav_per_unit": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "NAV Per Unit",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_value": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Total Investment Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "opening_value": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Opening Investment Value",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "fees_charged": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Management Fees Charged",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "opening_cash": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Opening Cash Balance",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "closing_cash": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Closing Cash Balance",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": 500.0,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": null
+    },
+    "income": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Income",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": "0.00"
+    },
+    "realized_gains": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Realised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": "0.00"
+    },
+    "unrealized_gains": {
+      "locator_type": "value_right_of_anchor",
+      "anchor": "Unrealised Gains",
+      "pattern": null,
+      "page_number": null,
+      "bbox": null,
+      "fallback_bbox": null,
+      "offset_x": null,
+      "offset_y": null,
+      "data_type": null,
+      "required": false,
+      "default": "0.00"
+    }
+  },
+  "holdings_table": null,
+  "transactions_table": {
+    "locator_type": "table_after_anchor",
+    "anchor": "Cash Ledger",
+    "page_number": null,
+    "bbox": null,
+    "fallback_bbox": null,
+    "header_keywords": [
+      "Date",
+      "Activity",
+      "Amount"
+    ],
+    "column_mapping": {
+      "date": "Date",
+      "type": "Activity",
+      "amount": "Amount (INR)"
+    },
+    "stop_anchor": null,
+    "multi_page": true,
+    "repeat_headers": false
+  },
+  "text_holdings": null,
+  "text_transactions": null,
+  "custom_tables": {},
+  "metadata": {
+    "is_active": true,
+    "status": "active"
+  }
+}

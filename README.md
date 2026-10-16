@@ -20,6 +20,10 @@ pip install -r requirements.txt
 
 # Generate the synthetic statement test suite:
 python -m src.sample_generator
+
+# Seed the specs/ directory with approved parsing specifications for formats A, B, and C.
+# This must be run once after generating samples (or any time specs/ is empty):
+PYTHONPATH=. .venv/bin/python scripts/bootstrap_specs.py
 ```
 
 ---
@@ -216,4 +220,5 @@ python -m src.cli --approve draft_synthetic-format-b
 1. **Digital PDFs Only**: The extraction engine targets vector-based digital PDFs with embedded text layers. Scanned, photographed, or purely rasterized PDFs require OCR preprocessing before pipeline extraction.
 2. **Deterministic Drift Quarantine**: When layout drift is suspected (`DRIFT_SUSPECTED`), the document is quarantined. Drifted formats cannot be automatically activated; human approval is required to update specifications.
 3. **Spec Learning**: When `--learn` is enabled for unknown formats, the LLM learner produces *draft* specifications (`specs/draft_*.json`). Drafts remain inactive until explicitly inspected and activated via `python -m src.cli --approve <DRAFT_ID>`.
-4. **Synthetic Scope**: Out-of-the-box specifications in `samples/synthetic/` cover Format A (standard & messy PMS), Format B (alternative PMS), and Format C (AIF). Third-party institutional statements require registering corresponding `ParsingSpec` templates.
+4. **Seeding Required**: Approved parsing specifications for the synthetic formats (A, B, C) are not bundled with source control because they embed live fingerprints extracted from the synthetic PDFs. Run `scripts/bootstrap_specs.py` once after generating samples to seed `specs/` and enable persistent format recognition across CLI invocations.
+5. **JSON Export (Future Enhancement)**: Direct CLI export of parsed statements to standalone JSON files is out of scope for this release. Extracted statements and validation findings are stored in the SQLite database (`data/pms_parser.db`) and accessible via `StatementStore`.
