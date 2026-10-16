@@ -233,3 +233,47 @@ result_batch = ingest_emails([msg], pipeline=pipeline)
    - Only `.pdf` attachments are currently parsed. Other statement formats (e.g. `.xlsx`, `.csv`) are skipped by default.
 3. **Sequential Attachment Processing**:
    - Processes attachments sequentially within each email.
+
+---
+
+# Part 3: Gmail IMAP Ingestion Adapter
+
+## 1. Purpose of the Gmail IMAP Adapter
+
+Automates fetching statement attachments directly from a Gmail inbox using IMAP over SSL:
+1. **Secure IMAP Connection**: Connects to `imap.gmail.com:993` over SSL using standard library `imaplib.IMAP4_SSL`.
+2. **Environment Credentials**: Authenticates with `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` from environment variables. Credentials are never hardcoded or logged; `repr(GmailIngestionConfig)` explicitly masks the password.
+3. **Configurable Mailbox & Search**: Selects mailboxes (default: `INBOX`, opened read-only) and evaluates search criteria (default: `ALL`, customizable to `UNSEEN`, `FROM`, date ranges) with optional message count limits (fetching newest messages).
+4. **Seamless EmailIngester Delegation**: Fetched RFC-822 MIME messages are parsed and handed to `EmailIngester`, ensuring that PDF filtering, deduplication, password candidate handling, temporary file isolation, and pipeline execution remain 100% unified.
+5. **Guaranteed Cleanup**: Employs context manager lifecycle (`with GmailIMAPClient(...)`) ensuring `close()` and `logout()` are called even on errors.
+6. **CLI Integration**: Seamlessly invoked via `python -m src.cli --gmail [MAILBOX] [--limit N] [--search CRITERIA]`.
+
+## 2. Setup & Usage
+
+1. **Configure Environment Variables**:
+   In `.env`:
+   ```bash
+   GMAIL_ADDRESS="user@gmail.com"
+   GMAIL_APP_PASSWORD="abcd efgh ijkl mnop"
+   ```
+
+2. **Programmatic Usage**:
+   ```python
+   from src.ingestion.gmail import ingest_gmail, GmailIngester
+   from src.pipeline.pipeline import Pipeline
+
+   pipeline = Pipeline()
+
+   # Ingest statements from INBOX
+   result = ingest_gmail(pipeline=pipeline, mailbox="INBOX", limit=10)
+   print(f"Discovered: {result.total_discovered}, Processed: {result.processed}")
+   ```
+
+3. **CLI Invocations**:
+   ```bash
+   # Default INBOX
+   python -m src.cli --gmail
+
+   # Custom mailbox with message limit and search criteria
+   python -m src.cli --gmail "Financial Statements" --limit 20 --search UNSEEN
+   ```

@@ -9,6 +9,10 @@ from src.ingestion.email import (
 from src.ingestion.exceptions import (
     DirectoryNotFoundError,
     EmailIngestionError,
+    IMAPAuthError,
+    IMAPConnectionError,
+    IMAPError,
+    IMAPFetchError,
     IngestionError,
     InvalidDirectoryError,
     MalformedEmailError,
@@ -20,6 +24,12 @@ from src.ingestion.folder import (
     PipelineInterface,
     ingest_folder,
 )
+from src.ingestion.gmail import (
+    GmailIMAPClient,
+    GmailIMAPIngester,
+    GmailIngester,
+    ingest_gmail,
+)
 from src.ingestion.models import (
     EmailAttachment,
     EmailIngestionConfig,
@@ -30,6 +40,8 @@ from src.ingestion.models import (
     FolderIngestionConfig,
     FolderIngestionResult,
     FolderIngestionSummary,
+    GmailIMAPConfig,
+    GmailIngestionConfig,
 )
 
 __all__ = [
@@ -53,6 +65,13 @@ __all__ = [
     "ingest_emails",
     "ingest_email_attachments",
     "parse_email_message",
+    # Gmail IMAP Ingestion
+    "GmailIMAPClient",
+    "GmailIngester",
+    "GmailIMAPIngester",
+    "GmailIngestionConfig",
+    "GmailIMAPConfig",
+    "ingest_gmail",
     # Exceptions
     "IngestionError",
     "InvalidDirectoryError",
@@ -60,4 +79,8 @@ __all__ = [
     "NotADirectoryPathError",
     "EmailIngestionError",
     "MalformedEmailError",
+    "IMAPError",
+    "IMAPAuthError",
+    "IMAPConnectionError",
+    "IMAPFetchError",
 ]

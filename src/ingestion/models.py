@@ -1,6 +1,7 @@
 """Data models and configuration for folder and email ingestion modules."""
 from __future__ import annotations
 
+import os
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -227,3 +228,82 @@ class EmailIngestionResult(BaseModel):
 
 # Alias for callers who prefer the name EmailIngestionSummary
 EmailIngestionSummary = EmailIngestionResult
+
+
+# ---------------------------------------------------------------------------
+# Gmail IMAP Ingestion Models
+# ---------------------------------------------------------------------------
+
+class GmailIngestionConfig(BaseModel):
+    """Configuration options for Gmail IMAP statement attachment fetching."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    host: str = "imap.gmail.com"
+    """IMAP server host. Defaults to 'imap.gmail.com'."""
+
+    port: int = 993
+    """IMAP SSL port. Defaults to 993."""
+
+    username: str | None = None
+    """Gmail address / username. Read from GMAIL_ADDRESS or GMAIL_USER if omitted."""
+
+    password: str | None = None
+    """Gmail App Password. Read from GMAIL_APP_PASSWORD if omitted."""
+
+    mailbox: str = "INBOX"
+    """Mailbox / folder to select. Defaults to 'INBOX'."""
+
+    search_criteria: str = "ALL"
+    """IMAP search criterion (e.g. 'ALL', 'UNSEEN'). Defaults to 'ALL'."""
+
+    limit: int | None = None
+    """Optional limit on maximum messages to fetch (fetches newest messages first)."""
+
+    passwords: list[str] = Field(default_factory=list)
+    """Candidate passwords to pass to the pipeline for encrypted PDF files."""
+
+    timeout: float = 30.0
+    """Socket timeout in seconds for IMAP operations. Defaults to 30.0."""
+
+    @classmethod
+    def from_env(cls, **overrides: Any) -> GmailIngestionConfig:
+        """Create a GmailIngestionConfig loaded from environment variables."""
+        username = (
+            overrides.pop("username", None)
+            or os.getenv("GMAIL_ADDRESS")
+            or os.getenv("GMAIL_USER")
+            or os.getenv("GMAIL_EMAIL")
+        )
+        password = (
+            overrides.pop("password", None)
+            or os.getenv("GMAIL_APP_PASSWORD")
+            or os.getenv("GMAIL_PASSWORD")
+        )
+        mailbox = overrides.pop("mailbox", None) or os.getenv("GMAIL_MAILBOX", "INBOX")
+        search_criteria = overrides.pop("search_criteria", None) or os.getenv("GMAIL_SEARCH_CRITERIA", "ALL")
+
+        raw_limit = overrides.pop("limit", None) or os.getenv("GMAIL_LIMIT")
+        limit_val = int(raw_limit) if raw_limit is not None else None
+
+        return cls(
+            username=username,
+            password=password,
+            mailbox=mailbox,
+            search_criteria=search_criteria,
+            limit=limit_val,
+            **overrides,
+        )
+
+    def __repr__(self) -> str:
+        """Ensure passwords are never logged or exposed in representations."""
+        masked_pwd = "***" if self.password else None
+        return (
+            f"GmailIngestionConfig(host={self.host!r}, port={self.port}, "
+            f"username={self.username!r}, password={masked_pwd!r}, "
+            f"mailbox={self.mailbox!r}, search_criteria={self.search_criteria!r}, "
+            f"limit={self.limit})"
+        )
+
+
+GmailIMAPConfig = GmailIngestionConfig

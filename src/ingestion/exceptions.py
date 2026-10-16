@@ -24,3 +24,19 @@ class EmailIngestionError(IngestionError):
 
 class MalformedEmailError(EmailIngestionError, ValueError):
     """Raised when an email message payload is malformed or unparseable."""
+
+
+class IMAPError(EmailIngestionError):
+    """Base exception for IMAP communication and mailbox errors."""
+
+
+class IMAPAuthError(IMAPError):
+    """Raised when IMAP authentication fails or credentials are missing."""
+
+
+class IMAPConnectionError(IMAPError):
+    """Raised when connecting or establishing SSL to the IMAP server fails."""
+
+
+class IMAPFetchError(IMAPError):
+    """Raised when selecting a mailbox or searching/fetching messages fails."""

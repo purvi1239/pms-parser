@@ -4,6 +4,7 @@ Coordinates single-file and folder-based document processing using the existing
 Pipeline and FolderIngester subsystems.
 """
 from __future__ import annotations
+from dotenv import load_dotenv
 
 import argparse
 import contextlib
@@ -11,8 +12,14 @@ from pathlib import Path
 import sys
 from typing import TextIO
 
+from src.ingestion.exceptions import (
+    IMAPAuthError,
+    IMAPConnectionError,
+    IMAPFetchError,
+)
 from src.ingestion.folder import FolderIngester, PipelineInterface
-from src.ingestion.models import FolderIngestionConfig
+from src.ingestion.gmail import GmailIngester
+from src.ingestion.models import FolderIngestionConfig, GmailIngestionConfig
 from src.learner.learner import Learner
 from src.models.enums import DocumentStatus
 from src.pipeline.models import PipelineConfig
@@ -24,7 +31,7 @@ from src.specs import (
     SpecValidationError,
 )
 
-
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the command-line argument parser.
 
@@ -99,6 +106,28 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="DRAFT_ID",
         default=None,
         help="Approve a saved draft parsing specification by its format ID and activate it.",
+    )
+    parser.add_argument(
+        "-g",
+        "--gmail",
+        nargs="?",
+        const="INBOX",
+        default=None,
+        metavar="MAILBOX",
+        help="Ingest statement attachments from Gmail via IMAP (default mailbox: INBOX).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Maximum number of messages to fetch from mailbox (Gmail mode only).",
+    )
+    parser.add_argument(
+        "--search",
+        metavar="CRITERIA",
+        default=None,
+        help="IMAP search criteria for filtering messages, e.g. 'UNSEEN' (Gmail mode only, default: 'ALL').",
     )
     parser.add_argument(
         "--overwrite",
@@ -515,6 +544,134 @@ def process_folder(
     return 0
 
 
+def process_gmail(
+    mailbox: str = "INBOX",
+    pipeline: Pipeline | PipelineInterface | None = None,
+    gmail_ingester: GmailIngester | None = None,
+    search_criteria: str | None = None,
+    limit: int | None = None,
+    password: str | None = None,
+    verbose: bool = False,
+    learn: bool = False,
+    out: TextIO = sys.stdout,
+    err: TextIO = sys.stderr,
+) -> int:
+    """Fetch and process statement attachments from a Gmail mailbox via IMAP.
+
+    Args:
+        mailbox: Target mailbox/folder name (defaults to 'INBOX').
+        pipeline: Optional Pipeline instance.
+        gmail_ingester: Optional GmailIngester instance (used for dependency injection/testing).
+        search_criteria: IMAP search criteria (e.g. 'ALL', 'UNSEEN').
+        limit: Optional maximum number of messages to fetch.
+        password: Candidate password for encrypted PDF statements.
+        verbose: Whether to display detailed per-document output.
+        learn: Whether to enable LLM learning for unknown document formats.
+        out: Output stream for results.
+        err: Output stream for errors.
+
+    Returns:
+        0 on success, 1 on processing/connection/auth error.
+    """
+    if pipeline is not None:
+        pipe = pipeline
+        if learn and isinstance(pipe, Pipeline):
+            pipe.config.enable_learning = True
+            if pipe.learner is None:
+                pipe.learner = Learner(
+                    spec_store=pipe.spec_store,
+                    engine=pipe.engine,
+                    validator=pipe.validator,
+                )
+    else:
+        config = PipelineConfig(
+            enable_learning=learn,
+            auto_activate_learned_spec=False,
+        )
+        pipe = Pipeline(
+            config=config,
+            learner=Learner() if learn else None,
+        )
+
+    if gmail_ingester is not None:
+        ingester = gmail_ingester
+    else:
+        cfg = GmailIngestionConfig.from_env(
+            mailbox=mailbox,
+            search_criteria=search_criteria or "ALL",
+            limit=limit,
+            passwords=[password] if password else [],
+        )
+        if not cfg.username or not cfg.password:
+            print(
+                "Error: Gmail ingestion requires GMAIL_ADDRESS and GMAIL_APP_PASSWORD environment variables.",
+                file=err,
+            )
+            return 1
+        ingester = GmailIngester(pipeline=pipe, config=cfg)
+
+    try:
+        res = ingester.ingest(
+            mailbox=mailbox,
+            search_criteria=search_criteria,
+            limit=limit,
+            password=password,
+        )
+    except (IMAPAuthError, IMAPConnectionError, IMAPFetchError) as exc:
+        print(f"Error: Gmail IMAP ingestion failed: {exc}", file=err)
+        if verbose:
+            import traceback
+            traceback.print_exc(file=err)
+        return 1
+    except Exception as exc:
+        print(f"Error: Unexpected failure during Gmail ingestion: {exc}", file=err)
+        if verbose:
+            import traceback
+            traceback.print_exc(file=err)
+        return 1
+
+    lines = [
+        f"Mailbox: {mailbox}",
+        f"Emails Processed: {res.total_emails}",
+        f"Attachments Inspected: {res.total_attachments}",
+        f"Eligible Discovered: {res.total_discovered}",
+        f"Processed: {res.processed}",
+        f"Successful: {res.successful}",
+        f"Duplicates: {res.duplicates}",
+        f"Skipped: {res.skipped}",
+        f"Quarantined: {res.quarantined}",
+        f"Failed: {res.failed}",
+    ]
+
+    if res.errors:
+        lines.append(f"Batch Errors: {len(res.errors)}")
+        for e in res.errors:
+            lines.append(f"  - {e}")
+
+    if res.failed > 0:
+        failed_items = [
+            r
+            for r in res.results
+            if r.status in (DocumentStatus.FAILED, DocumentStatus.NEEDS_PASSWORD)
+        ]
+        if failed_items:
+            lines.append(f"\nFailed Documents ({len(failed_items)}):")
+            for r in failed_items:
+                reason = f": {r.errors[0]}" if r.errors else ""
+                lines.append(f"  - {Path(r.file_path).name} [{r.status.value}]{reason}")
+
+    if verbose and res.results:
+        lines.append(f"\nProcessed Documents ({len(res.results)}):")
+        for r in res.results:
+            lines.append(f"  - {Path(r.file_path).name}: {r.status.value}")
+
+    print("\n".join(lines), file=out)
+
+    if res.failed > 0:
+        return 1
+    return 0
+
+
 def list_draft_specs(
     store: SpecStore | None = None,
     out: TextIO = sys.stdout,
@@ -596,6 +753,7 @@ def main(
     argv: list[str] | None = None,
     pipeline: Pipeline | PipelineInterface | None = None,
     ingester: FolderIngester | None = None,
+    gmail_ingester: GmailIngester | None = None,
     spec_store: SpecStore | None = None,
     out: TextIO | None = None,
     err: TextIO | None = None,
@@ -606,6 +764,7 @@ def main(
         argv: Optional argument list (defaults to sys.argv[1:]).
         pipeline: Optional injectable Pipeline instance for testing.
         ingester: Optional injectable FolderIngester instance for testing.
+        gmail_ingester: Optional injectable GmailIngester instance for testing.
         spec_store: Optional injectable SpecStore instance for testing.
         out: Optional stdout stream override.
         err: Optional stderr stream override.
@@ -646,20 +805,40 @@ def main(
 
     # Mode: List drafts
     if getattr(args, "list_drafts", False):
-        if args.path or args.folder or getattr(args, "approve", None):
+        if args.path or args.folder or getattr(args, "approve", None) or getattr(args, "gmail", None):
             print("Error: Cannot combine --list-drafts with document paths or other operations.", file=err_stream)
             return 2
         return list_draft_specs(store=resolved_store, out=out_stream, err=err_stream)
 
     # Mode: Approve draft
     if getattr(args, "approve", None):
-        if args.path or args.folder:
-            print("Error: Cannot specify a document path or --folder when approving a draft.", file=err_stream)
+        if args.path or args.folder or getattr(args, "gmail", None):
+            print("Error: Cannot specify a document path, --folder, or --gmail when approving a draft.", file=err_stream)
             return 2
         return approve_draft_spec(
             draft_id=args.approve,
             overwrite=getattr(args, "overwrite", False),
             store=resolved_store,
+            out=out_stream,
+            err=err_stream,
+        )
+
+    # Mode: Gmail IMAP ingestion
+    gmail_target = getattr(args, "gmail", None)
+    if gmail_target is not None:
+        if args.path or args.folder:
+            print("Error: Cannot specify both --gmail and a document path or --folder.", file=err_stream)
+            return 2
+
+        return process_gmail(
+            mailbox=gmail_target,
+            pipeline=pipeline,
+            gmail_ingester=gmail_ingester,
+            search_criteria=getattr(args, "search", None),
+            limit=getattr(args, "limit", None),
+            password=args.password,
+            verbose=args.verbose,
+            learn=getattr(args, "learn", False),
             out=out_stream,
             err=err_stream,
         )
@@ -671,7 +850,7 @@ def main(
 
     # Validation: Must specify at least one target
     if not args.path and not args.folder:
-        print("Error: Please provide a PDF file path or --folder directory path.", file=err_stream)
+        print("Error: Please provide a PDF file path, --folder directory path, or --gmail option.", file=err_stream)
         print("Use --help for usage instructions.", file=err_stream)
         return 2
 
