@@ -61,9 +61,9 @@ def extract_field_value(statement: Statement | None, field_name: str) -> tuple[b
 
     # Synthetic count helpers
     if field_name == "holdings_count":
-        return (True, len(statement.holdings))
+        return (True, len(statement.holdings or []))
     if field_name == "transactions_count":
-        return (True, len(statement.transactions))
+        return (True, len(statement.transactions or []))
 
     # Dot-path navigation (e.g. 'summary.closing_value')
     if "." in field_name:
@@ -145,9 +145,13 @@ def compare_field_value(
 
     # Case 3: Both values are present -> Compare values with conservative normalizations
 
+    # 3.0. Enum unwrapping (normalize Enum instances to their values)
+    exp_val = expected.value if isinstance(expected, Enum) else expected
+    act_val = actual.value if isinstance(actual, Enum) else actual
+
     # 3.1. Boolean comparison (must check before int/Decimal since bool is subclass of int)
-    if isinstance(expected, bool) or isinstance(actual, bool):
-        if expected is actual:
+    if isinstance(exp_val, bool) or isinstance(act_val, bool):
+        if exp_val is act_val:
             return FieldComparisonResult(
                 field_name=field_name,
                 expected=expected,
@@ -160,12 +164,12 @@ def compare_field_value(
                 expected=expected,
                 actual=actual,
                 status=FieldMatchStatus.INCORRECT,
-                difference=f"Expected boolean {expected}, got {actual}",
+                difference=f"Expected boolean {exp_val}, got {act_val}",
             )
 
     # 3.2. Decimal / Numeric comparison
-    exp_dec = to_decimal(expected)
-    act_dec = to_decimal(actual)
+    exp_dec = to_decimal(exp_val)
+    act_dec = to_decimal(act_val)
     if exp_dec is not None and act_dec is not None:
         diff = abs(act_dec - exp_dec)
         if diff <= cfg.monetary_tolerance:
@@ -186,8 +190,8 @@ def compare_field_value(
 
     # 3.3. Date normalization comparison
     if cfg.date_format_normalization:
-        exp_date = to_date_str(expected)
-        act_date = to_date_str(actual)
+        exp_date = to_date_str(exp_val)
+        act_date = to_date_str(act_val)
         if exp_date is not None and act_date is not None:
             if exp_date == act_date:
                 return FieldComparisonResult(
@@ -205,11 +209,7 @@ def compare_field_value(
                     difference=f"Date mismatch: expected {exp_date}, got {act_date}",
                 )
 
-    # 3.4. Enum unwrapping
-    exp_val = expected.value if isinstance(expected, Enum) else expected
-    act_val = actual.value if isinstance(actual, Enum) else actual
-
-    # 3.5. String / Generic comparison
+    # 3.4. String / Generic comparison
     exp_str = str(exp_val).strip()
     act_str = str(act_val).strip()
     if exp_str == act_str:

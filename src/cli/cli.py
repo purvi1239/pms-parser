@@ -135,6 +135,18 @@ def create_parser() -> argparse.ArgumentParser:
         default=False,
         help="Allow overwriting an existing active specification during approval.",
     )
+    parser.add_argument(
+        "--verify-ollama",
+        action="store_true",
+        default=False,
+        help="Verify live local Ollama (llama3.2:3b) connection using synthetic input.",
+    )
+    parser.add_argument(
+        "--verify-gmail",
+        action="store_true",
+        default=False,
+        help="Opt-in to verify live Gmail IMAP connection and authentication in read-only mode.",
+    )
     return parser
 
 
@@ -802,6 +814,17 @@ def main(
         resolved_store = pipeline.spec_store
     if resolved_store is None:
         resolved_store = SpecStore()
+
+    # Mode: Stage 3 Integration Verification
+    if getattr(args, "verify_ollama", False) or getattr(args, "verify_gmail", False):
+        from verify_integrations import run_verification
+        return run_verification(
+            verify_ollama_flag=getattr(args, "verify_ollama", False),
+            verify_gmail_flag=getattr(args, "verify_gmail", False),
+            verbose=args.verbose,
+            out=out_stream,
+            err=err_stream,
+        )
 
     # Mode: List drafts
     if getattr(args, "list_drafts", False):

@@ -28,13 +28,30 @@ class LLMConfig(BaseModel):
     replay_dir: Union[str, Path, None] = None
     ledger_path: Union[str, Path, None] = None
 
+_LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _is_local_url(api_base: str) -> bool:
+    """Return True when api_base resolves to a loopback address.
+
+    Handles IPv4 (127.0.0.1), IPv6 (::1, [::1]), and the 'localhost' hostname.
+    """
+    try:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(api_base)
+        host = (parsed.hostname or "").lower().strip("[]")
+        return host in _LOCAL_HOSTNAMES
+    except Exception:
+        return False
+
+
     @classmethod
     def from_env(cls) -> LLMConfig:
         """Create an LLMConfig populated from standard environment variables.
 
         Supported variables:
         - LLM_API_KEY: Provider API key
-        - LLM_MODEL: Model name (default: gpt-4o-mini)
+        - LLM_MODEL: Model name (default: llama3.2:3b for local endpoints, gpt-4o-mini for remote)
         - LLM_API_BASE: Custom API base URL
         - LLM_TIMEOUT: Request timeout in seconds
         - LLM_REPLAY_MODE: "disabled", "record", or "replay"
@@ -44,10 +61,18 @@ class LLMConfig(BaseModel):
         raw_timeout = os.getenv("LLM_TIMEOUT")
         timeout_val = float(raw_timeout) if raw_timeout else 120.0
 
+        api_base = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")
+        model = os.getenv("LLM_MODEL")
+        if not model:
+            if _is_local_url(api_base):
+                model = "llama3.2:3b"
+            else:
+                model = "gpt-4o-mini"
+
         return cls(
             api_key=os.getenv("LLM_API_KEY"),
-            api_base=os.getenv("LLM_API_BASE", "https://api.openai.com/v1"),
-            model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            api_base=api_base,
+            model=model,
             timeout_seconds=timeout_val,
             replay_mode=os.getenv("LLM_REPLAY_MODE", "disabled"),
             replay_dir=os.getenv("LLM_REPLAY_DIR"),

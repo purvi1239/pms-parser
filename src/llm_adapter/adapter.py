@@ -56,6 +56,14 @@ def _is_local_url(api_base: str) -> bool:
         return False
 
 
+def _normalize_api_base(api_base: str) -> str:
+    """Ensure local Ollama/OpenAI API base URLs include the /v1 prefix if missing."""
+    base = api_base.rstrip("/")
+    if _is_local_url(base) and not base.endswith("/v1") and "/v1/" not in base:
+        base = f"{base}/v1"
+    return base
+
+
 def _extract_json_payload(raw_text: str) -> dict[str, Any]:
     """Extract a JSON object from raw LLM text (handling markdown code blocks).
 
@@ -400,7 +408,8 @@ class LLMAdapter:
                 "LLM API key not configured. Set the LLM_API_KEY environment variable."
             )
 
-        url = f"{config.api_base.rstrip('/')}/chat/completions"
+        normalized_base = _normalize_api_base(config.api_base)
+        url = f"{normalized_base}/chat/completions"
         data_bytes = json.dumps(payload).encode("utf-8")
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -432,6 +441,31 @@ class LLMAdapter:
                     f"Authentication failed (HTTP {exc.code}): Invalid or missing API key.",
                     status_code=exc.code,
                 ) from exc
+            if exc.code == 404:
+                err_detail = ""
+                try:
+                    err_json = json.loads(error_body)
+                    if isinstance(err_json, dict) and "error" in err_json:
+                        err_detail = err_json["error"].get("message", "")
+                except Exception:
+                    pass
+                target_model = payload.get("model", config.model)
+                if local:
+                    if "not found" in err_detail.lower() or "model" in err_detail.lower():
+                        raise LLMAPIError(
+                            f"Model '{target_model}' not found in local Ollama instance at {config.api_base} "
+                            f"(detail: {err_detail}). Run 'ollama pull {target_model}' or check available models with 'ollama list'.",
+                            status_code=404,
+                        ) from exc
+                    raise LLMAPIError(
+                        f"Local LLM endpoint returned HTTP 404 at {url} (detail: {err_detail or error_body[:200]}). "
+                        f"Verify that Ollama is running and serving the API at {config.api_base}.",
+                        status_code=404,
+                    ) from exc
+                raise LLMAPIError(
+                    f"LLM API returned HTTP 404 at {url}: {err_detail or error_body[:200]}",
+                    status_code=404,
+                ) from exc
             if exc.code == 429:
                 raise LLMRateLimitError(
                     f"Rate limit exceeded (HTTP 429): {error_body[:200]}",
@@ -446,6 +480,11 @@ class LLMAdapter:
             if isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in str(exc).lower():
                 raise LLMTimeoutError(
                     f"Request to LLM timed out after {config.timeout_seconds} seconds."
+                ) from exc
+            if local:
+                raise LLMConnectionError(
+                    f"Failed to connect to local Ollama instance at {config.api_base}: {exc}. "
+                    "Ensure Ollama is running (e.g. run 'ollama serve' or check 'ollama list')."
                 ) from exc
             raise LLMConnectionError(
                 f"Failed to connect to LLM endpoint at {config.api_base}: {exc}"
