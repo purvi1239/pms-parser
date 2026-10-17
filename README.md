@@ -1,6 +1,6 @@
 # PMS & AIF Investment Statement Parser
 
-A deterministic, multi-format financial statement ingestion, parsing, and validation engine designed for **Portfolio Management Services (PMS)** and **Alternative Investment Funds (AIF)** statements.
+A deterministic, multi-format financial statement ingestion, parsing, and validation engine designed for Indian **Portfolio Management Services (PMS)** and **Alternative Investment Funds (AIF)** statements.
 
 ---
 
@@ -51,7 +51,7 @@ python -m src.cli --help
 ```
 
 Optional extras:
-- **Ollama** (local LLM) is only needed if you want the parser to learn unfamiliar formats. See [Section 5](#5-stage-3-live-integrations-ollama--gmail-imap).
+- **Ollama** (local LLM) is only needed if you want the parser to learn unfamiliar formats. See [Section 6](#6-stage-3-live-integrations-ollama--gmail-imap).
 - **Gmail credentials** are only needed if you want to pull statements from a mailbox.
 
 ### 2.2 Parse a Single Statement
@@ -80,7 +80,7 @@ Without a password, the document is marked `NEEDS_PASSWORD`. The password is use
 
 ### 2.5 Pull Statements from Gmail (Optional, Read-Only)
 
-1. Add `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` and `GMAIL_MAILBOX` to `.env` (setup steps in [Section 5.2](#52-gmail-imap-integration-opt-in--read-only)).
+1. Add `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` and `GMAIL_MAILBOX` to `.env` (setup steps in [Section 6.2](#62-gmail-imap-integration-opt-in--read-only)).
 2. Verify the connection, then ingest:
 
 ```bash
@@ -137,7 +137,128 @@ Add `--verbose` to either for full diagnostics. These demos run on synthetic sta
 
 ---
 
-## 3. Stage 1 Synthetic Demo
+## 3. Testing with External Sample PDFs (Step-by-Step)
+
+This walkthrough runs the parser on two real-layout PDFs in `samples/external/`: one in a known format and one in an unknown format. Together they show the full lifecycle: parse, quarantine, learn, approve, re-parse.
+
+- **Known format:** `samples/external/format_a1_crestline.pdf`. Its layout, anchors and table columns (Scrip / Security Name, ISIN, Quantity, Avg Cost, Current Value) match the active spec `synthetic-format-a` (`specs/synthetic-format-a.json`).
+- **Unknown format:** `samples/external/fund.pdf`. No template or active spec matches it, so it is classified as a `STATEMENT` with an unknown fingerprint and routed to `NEEDS_REVIEW`. Passing `--learn` activates the learning pipeline.
+
+**Where the JSON goes:** the CLI does not write JSON files to disk after parsing. Parsed statements are stored in SQLite at `data/pms_parser.db`, in the `statements` table (`statement_data` column). The commands below print that JSON to the terminal, read-only.
+
+### Step 0: Setup
+
+Run all commands from the repository root:
+
+```bash
+cd pms-parser
+source .venv/bin/activate
+
+# List the available external sample PDFs:
+ls -lh samples/external/
+
+# List currently active specifications:
+ls -lh specs/
+```
+
+### Step 1: Known Format (`Ex: format_a1_crestline.pdf`)
+
+**1.1 Run the parser**
+
+```bash
+python -m src.cli samples/external/format_a1_crestline.pdf --verbose
+```
+
+**1.2 What success looks like**
+- `Status: PARSED` (with a green checkmark ✅)
+- `Format: synthetic-format-a`
+- Extracted counts for holdings and transactions
+- A printed Document ID (e.g. `019...`)
+
+**1.3 View the extracted JSON**
+
+Option A: query SQLite directly (recommended). This returns the latest parsed record:
+
+```bash
+sqlite3 data/pms_parser.db "SELECT statement_data FROM statements ORDER BY created_at DESC LIMIT 1;" | python -m json.tool
+```
+
+Option B: use `StatementStore.export_statement_json()` with the Document ID from the verbose output:
+
+```bash
+python -c "import sys; from src.store.store import StatementStore; print(StatementStore().export_statement_json(sys.argv[1]))" "<DOC_ID>" | python -m json.tool
+```
+
+### Step 2: Unknown Format (`Ex:fund.pdf`)
+
+**2.1 Run without learning (observe the unknown-format result)**
+
+```bash
+python -m src.cli samples/external/fund.pdf --verbose
+```
+
+Expected:
+- `Status: NEEDS_REVIEW` (🔍)
+- `Format: None`
+- Message: `No matching specification found`
+- The statement is queued for human review and no parsed JSON is stored.
+
+**2.2 Run with learning enabled**
+
+```bash
+python -m src.cli samples/external/fund.pdf --learn --verbose
+```
+
+> Learning calls the local Ollama instance (default `http://localhost:11434/v1`, model `llama3.2:3b`). Make sure Ollama is running for live inference; otherwise the LLM adapter will log connection errors or replay recorded responses. See [Section 6.1](#61-local-ollama-integration-llama323b).
+
+**2.3 How to recognise the learning workflow**
+- The CLI logs anchor-candidate extraction, the LLM call, and testing of the candidate spec against the PDF.
+- On success, a draft spec is written to `specs/draft_<format_id>.json`.
+- The document still reports `NEEDS_REVIEW` (or `PROPOSED`). Learned specs are never auto-approved; a human has to review them first.
+
+### Step 3: Review, Approve and Re-run
+
+**3.1 List saved drafts**
+
+```bash
+python -m src.cli --list-drafts
+```
+
+**3.2 Review the draft**
+
+Replace `<draft_file.json>` with the draft name from step 3.1:
+
+```bash
+cat specs/<draft_file.json> | python -m json.tool
+```
+
+**3.3 Approve the draft**
+
+When you are satisfied, approve it by draft ID or filename (e.g. `draft_fund`):
+
+```bash
+python -m src.cli --approve <DRAFT_ID>
+```
+
+This validates the draft, removes the `draft_` prefix, promotes it to an active spec in `specs/`, and registers it in `SpecStore`.
+
+**3.4 Re-run the unknown PDF**
+
+```bash
+python -m src.cli samples/external/fund.pdf --verbose
+```
+
+Expected: `Status: PARSED` (✅) and `Format: <approved_format_id>`.
+
+**3.5 View the JSON for the newly learned format**
+
+```bash
+sqlite3 data/pms_parser.db "SELECT statement_data FROM statements ORDER BY created_at DESC LIMIT 1;" | python -m json.tool
+```
+
+---
+
+## 4. Stage 1 Synthetic Demo
 
 Stage 1 validates the end-to-end ingestion, layout recognition, financial validation, drift quarantine, and password handling using the deterministic synthetic test suite located in `samples/synthetic/`.
 
@@ -179,7 +300,7 @@ python demo.py --verbose
 
 ---
 
-## 4. Stage 2 Learning & Spec-Reuse Demo
+## 5. Stage 2 Learning & Spec-Reuse Demo
 
 Stage 2 demonstrates the unknown-format learning and human-in-the-loop approval lifecycle using synthetic Format B (`samples/synthetic/format_b.pdf`) and the built-in offline mock LLM transport (`FakeLLMAdapter`).
 
@@ -202,13 +323,13 @@ python demo_stage2.py --verbose
 
 ---
 
-## 5. Stage 3 Live Integrations: Ollama & Gmail IMAP
+## 6. Stage 3 Live Integrations: Ollama & Gmail IMAP
 
 Stage 3 verifies live external integrations for the PMS Parser:
 1. **Local Ollama Integration**: Real LLM extraction using the locally installed `llama3.2:3b` model over Ollama's local OpenAI-compatible API (`http://localhost:11434/v1`).
 2. **Gmail IMAP Integration**: Attachment discovery and ingestion over SSL (`imap.gmail.com:993`) using Google App Passwords in strictly read-only mode.
 
-### 5.1 Local Ollama Integration (`llama3.2:3b`)
+### 6.1 Local Ollama Integration (`llama3.2:3b`)
 
 The PMS Parser connects directly to local Ollama instances without external network calls or cloud API keys.
 
@@ -244,7 +365,7 @@ The verification makes a **real request** (never falls back to a mock) using syn
 
 ---
 
-### 5.2 Gmail IMAP Integration (Opt-In & Read-Only)
+### 6.2 Gmail IMAP Integration (Opt-In & Read-Only)
 
 The parser includes an adapter for fetching financial statement PDF attachments directly from a Gmail mailbox.
 
@@ -290,7 +411,7 @@ python -m src.cli --gmail INBOX --search "UNSEEN" --limit 10
 
 ---
 
-## 6. CLI Usage
+## 7. CLI Usage
 
 The command-line interface coordinates document processing, mailbox ingestion, specification approval, and integration checks:
 
@@ -322,8 +443,7 @@ python -m src.cli --approve draft_synthetic-format-b
 
 ---
 
-
-## 7. Documentation
+## 8. Documentation
 
 - [Architecture & Design Overview](docs/DESIGN.md): Subsystem responsibilities, pipeline state machines, and data flow.
 - [AI Implementation & Engineering Log](docs/AI_LOG.md): Comprehensive chronological engineering log documenting all 17 build steps, design decisions, bug fixes, test counts, and system boundaries.
