@@ -560,3 +560,18 @@ Implemented the evaluation framework in `src/eval/` to benchmark extraction accu
    - Gmail IMAP ingestion connects strictly in read-only mode (`readonly=True`). The parser does not alter mailbox flags, mark messages as read, delete emails, or transmit outgoing messages.
 8. **Currency & Language Scope**:
    - Keyword rules, date parsing heuristics, and currency symbols (`INR`, `₹`) are tailored for Indian PMS and AIF investment statements written in English. Multi-currency cross-rate conversions within a single statement are not performed.
+
+
+### Where AI helped most
+
+- **Breaking the project into implementable steps.** AI helped turn the PMS Parser plan into modules covering document ingestion, the intermediate representation (IR), classification, parsing, validation, learning, and SQLite storage. This made a fairly large project easier to implement and review incrementally.
+- **Debugging across modules.** It helped trace why documents were being classified as `SKIPPED` when the page text existed in words or table cells but not in `raw_text`. Fixing the text fallback in `PageIR.get_text()` resolved the issue.
+- **Building the learning workflow.** AI helped implement the LLM adapter, sensitive-data redaction, draft specification generation, validation, and the explicit approval workflow for unknown formats.
+- **Working within limited tool access.** When Antigravity usage became limited, I used chat to review implementation steps and prepare focused changes, then ran commands and tests locally.
+
+### Where AI misled me, and what I changed
+
+- **Assuming JSON export existed.** AI initially directed me to look for exported JSON without first establishing whether the CLI actually wrote it. I had to inspect the pipeline’s export logic and distinguish parsed data stored in SQLite from JSON files on disk.
+- **Assuming a successful integration check proves the whole pipeline.** The live Ollama check confirmed that the local model could respond with structured output, but that alone did not prove that an arbitrary real PDF could be parsed correctly. I treated model connectivity, PDF parsing, validation, and output persistence as separate things to verify.
+
+Overall, AI was most useful as an implementation and debugging assistant, but it sometimes filled gaps in its knowledge with plausible assumptions. I learned to verify filenames, inspect the actual code and CLI, and run tests and integration checks myself before treating a feature as complete.
