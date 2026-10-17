@@ -1,6 +1,6 @@
 # PMS & AIF Investment Statement Parser
 
-A deterministic, multi-format financial statement ingestion, parsing, and validation engine designed for Indian **Portfolio Management Services (PMS)** and **Alternative Investment Funds (AIF)** statements.
+A deterministic, multi-format financial statement ingestion, parsing, and validation engine designed for **Portfolio Management Services (PMS)** and **Alternative Investment Funds (AIF)** statements.
 
 ---
 
@@ -28,7 +28,116 @@ PYTHONPATH=. .venv/bin/python scripts/bootstrap_specs.py
 
 ---
 
-## 2. Stage 1 Synthetic Demo
+## 2. How to Use
+
+This section is a start-to-finish walkthrough for running the parser on your own statements. Detailed demos and integration setup follow in later sections.
+
+### 2.1 Set Up
+
+```bash
+git clone https://github.com/purvi1239/pms-parser.git
+cd pms-parser
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Generate synthetic samples, then seed the built-in specs (one-time):
+python -m src.sample_generator
+PYTHONPATH=. .venv/bin/python scripts/bootstrap_specs.py
+
+# See every option your installed version supports:
+python -m src.cli --help
+```
+
+Optional extras:
+- **Ollama** (local LLM) is only needed if you want the parser to learn unfamiliar formats. See [Section 5](#5-stage-3-live-integrations-ollama--gmail-imap).
+- **Gmail credentials** are only needed if you want to pull statements from a mailbox.
+
+### 2.2 Parse a Single Statement
+
+```bash
+python -m src.cli path/to/statement.pdf
+```
+
+The parser fingerprints the layout, matches it to a known specification, extracts the data, and runs financial validation checks. The result is printed with a status (see [2.7](#27-reading-the-result)).
+
+### 2.3 Parse a Folder of Statements
+
+```bash
+python -m src.cli --folder path/to/statements/
+```
+
+Every PDF in the folder goes through the same pipeline. Exact duplicates are detected and marked `DUPLICATE`.
+
+### 2.4 Parse a Password-Protected PDF
+
+```bash
+python -m src.cli path/to/statement.pdf --password "<PASSWORD>"
+```
+
+Without a password, the document is marked `NEEDS_PASSWORD`. The password is used in memory only and is never logged or stored.
+
+### 2.5 Pull Statements from Gmail (Optional, Read-Only)
+
+1. Add `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` and `GMAIL_MAILBOX` to `.env` (setup steps in [Section 5.2](#52-gmail-imap-integration-opt-in--read-only)).
+2. Verify the connection, then ingest:
+
+```bash
+python -m src.cli --verify-gmail
+python -m src.cli --gmail INBOX --limit 5
+```
+
+The mailbox is opened read-only. Nothing is marked, moved, deleted or sent.
+
+### 2.6 Handle an Unknown or Changed Format
+
+If a statement's layout is not recognised, it is not guessed at. Instead:
+
+```bash
+# 1. Let the LLM learner propose a draft spec (requires Ollama running):
+python -m src.cli path/to/unknown-statement.pdf --learn
+
+# 2. See the drafts waiting for review:
+python -m src.cli --list-drafts
+
+# 3. Open the draft in specs/draft_<name>.json, check it against the PDF,
+#    then approve it:
+python -m src.cli --approve <draft_id>
+```
+
+After approval, that format is parsed deterministically with no further LLM calls. Always review a draft before approving; a draft that was generated successfully is not necessarily a correct one.
+
+If a known format has changed slightly (reordered columns, renamed headers), the document is quarantined as `DRIFT_SUSPECTED` and waits for human review rather than being parsed with a stale spec.
+
+### 2.7 Reading the Result
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `PARSED` | Parsed and all applicable checks passed. | Nothing. |
+| `PARSED_WITH_WARNINGS` | Parsed, but one or more checks flagged something. | Review the warnings against the PDF. |
+| `NEEDS_REVIEW` | Format is unknown or could not be handled. | Run with `--learn`, or review manually. |
+| `DRIFT_SUSPECTED` | Layout resembles a known format but has changed. | Review, then update or approve a spec. |
+| `NEEDS_PASSWORD` | PDF is encrypted. | Re-run with `--password`. |
+| `DUPLICATE` | Same document already processed. | Nothing. |
+| `SKIPPED` | Not processed further. | Check the reason in the output. |
+| `LEARNING_FAILED` | The learning workflow did not complete. | Check Ollama is running, then retry. |
+
+Parsed data and validation findings are stored in SQLite at `data/pms_parser.db` and can be read through `StatementStore`. Validation checks include cash balance flow, portfolio weights summing to ~100%, `quantity * price ≈ market_value`, ISIN checksums, and (for AIFs) `units * NAV ≈ closing value`.
+
+### 2.8 Try It Without Your Own Files
+
+```bash
+python demo.py            # Stage 1: parsing, validation, drift, encryption
+python demo_stage2.py     # Stage 2: learning and spec reuse
+```
+
+Add `--verbose` to either for full diagnostics. These demos run on synthetic statements and do not prove that every real-world format is supported.
+
+
+---
+
+## 3. Stage 1 Synthetic Demo
 
 Stage 1 validates the end-to-end ingestion, layout recognition, financial validation, drift quarantine, and password handling using the deterministic synthetic test suite located in `samples/synthetic/`.
 
@@ -70,9 +179,7 @@ python demo.py --verbose
 
 ---
 
----
-
-## 3. Stage 2 Learning & Spec-Reuse Demo
+## 4. Stage 2 Learning & Spec-Reuse Demo
 
 Stage 2 demonstrates the unknown-format learning and human-in-the-loop approval lifecycle using synthetic Format B (`samples/synthetic/format_b.pdf`) and the built-in offline mock LLM transport (`FakeLLMAdapter`).
 
@@ -95,13 +202,13 @@ python demo_stage2.py --verbose
 
 ---
 
-## 4. Stage 3 Live Integrations: Ollama & Gmail IMAP
+## 5. Stage 3 Live Integrations: Ollama & Gmail IMAP
 
 Stage 3 verifies live external integrations for the PMS Parser:
 1. **Local Ollama Integration**: Real LLM extraction using the locally installed `llama3.2:3b` model over Ollama's local OpenAI-compatible API (`http://localhost:11434/v1`).
 2. **Gmail IMAP Integration**: Attachment discovery and ingestion over SSL (`imap.gmail.com:993`) using Google App Passwords in strictly read-only mode.
 
-### 4.1 Local Ollama Integration (`llama3.2:3b`)
+### 5.1 Local Ollama Integration (`llama3.2:3b`)
 
 The PMS Parser connects directly to local Ollama instances without external network calls or cloud API keys.
 
@@ -137,7 +244,7 @@ The verification makes a **real request** (never falls back to a mock) using syn
 
 ---
 
-### 4.2 Gmail IMAP Integration (Opt-In & Read-Only)
+### 5.2 Gmail IMAP Integration (Opt-In & Read-Only)
 
 The parser includes an adapter for fetching financial statement PDF attachments directly from a Gmail mailbox.
 
@@ -183,7 +290,7 @@ python -m src.cli --gmail INBOX --search "UNSEEN" --limit 10
 
 ---
 
-## 5. CLI Usage
+## 6. CLI Usage
 
 The command-line interface coordinates document processing, mailbox ingestion, specification approval, and integration checks:
 
@@ -215,15 +322,6 @@ python -m src.cli --approve draft_synthetic-format-b
 
 ---
 
-## 6. Known Limitations & Scope
-
-1. **Digital PDFs Only**: The extraction engine targets vector-based digital PDFs with embedded text layers. Scanned, photographed, or purely rasterized PDFs require OCR preprocessing before pipeline extraction.
-2. **Deterministic Drift Quarantine**: When layout drift is suspected (`DRIFT_SUSPECTED`), the document is quarantined. Drifted formats cannot be automatically activated; human approval is required to update specifications.
-3. **Spec Learning**: When `--learn` is enabled for unknown formats, the LLM learner produces *draft* specifications (`specs/draft_*.json`). Drafts remain inactive until explicitly inspected and activated via `python -m src.cli --approve <DRAFT_ID>`.
-4. **Seeding Required**: Approved parsing specifications for the synthetic formats (A, B, C) are not bundled with source control because they embed live fingerprints extracted from the synthetic PDFs. Run `scripts/bootstrap_specs.py` once after generating samples to seed `specs/` and enable persistent format recognition across CLI invocations.
-5. **JSON Export (Future Enhancement)**: Direct CLI export of parsed statements to standalone JSON files is out of scope for this release. Extracted statements and validation findings are stored in the SQLite database (`data/pms_parser.db`) and accessible via `StatementStore`.
-
----
 
 ## 7. Documentation
 
